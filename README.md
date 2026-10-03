@@ -12,7 +12,7 @@ The same program runs on a Mac, where a synthesized tone can stand in for the mi
 | coordinate | version | what it does here |
 |---|---|---|
 | `skitter` | 0.1.0 | the Android activity, the Gradle build, the system bars |
-| `syslui` | 0.1.3 | the interface — `meter`, and `.font_size` for the note name |
+| `syslui` | 0.1.4 | the interface — `meter`, `.font_size` for the note name, and `slider` for the Detection settings |
 | `syslui-sdl` | 0.2.1 | the window and frame loop; `on_frame` is where the microphone is drained |
 | `sdl3` | 0.3.2 | `open_recording_stream`, which also asks for the permission |
 | `pitch` | 0.1.2 | YIN pitch detection, the high-pass filter ahead of it, subharmonic correction, and the note arithmetic |
@@ -44,6 +44,31 @@ rumble under it.
 
 Everything is counted in samples, so the answer does not depend on how the audio arrives — a test
 feeds the same second in random chunks, empty ones included, and gets the identical reading.
+
+## Detection settings
+
+**Detection +**, under the status line, opens a section that changes the numbers above while the tuner
+listens; each change applies from the next window, without restarting the microphone.
+
+| setting | range | default |
+|---|---|---|
+| High-pass cutoff | 20–150 Hz, steps of 5 | 65 Hz — a new cutoff starts a new filter |
+| YIN threshold | 0.05–0.5 | 0.2 |
+| Minimum clarity | 0.5–0.99 | 0.8 |
+| Subharmonic tolerance | 0–0.4 | 0.1 — 0 turns the correction off |
+| Smoothing (the median's length) | 1–9 readings, odd | 5 |
+| Hold | 0–3 s | 1 s |
+| Silence gate | −80 to −26 dBFS | −60 dBFS, an RMS of 0.001 |
+
+The silence gate is set in decibels because its range, an RMS from 0.0001 to 0.05, is five hundred to
+one: on a linear slider the default would sit six points from the left end. In decibels every step is
+the same 12% change in level, and it reads on the same scale as the **Input** meter beneath it, whose
+major tick marks the gate — so the gate can be set a few decibels above what the room reads with
+nothing playing. Under the meter is the last window's own reading, before the median and the clarity
+cut, marked *dropped* when the cut left it out. **Reset to defaults** puts every slider back.
+
+**The settings are not saved**: every launch starts from the defaults. `TUNER_DETECTION=open` starts the
+desktop program with the section open.
 
 ## Building and running on Android
 
@@ -94,6 +119,11 @@ ten cents sharp reads +10, silence reads nothing, a stopped string is held and t
 schedule, the median outvotes a burst of another pitch, and chunked delivery matches one big chunk.
 Tones gliding between E2 and F2, or wavering around the 50-cent line between E2 and D#2, check that
 the note shown switches only past 60 cents.
+
+Every detection setting has a test that changes it partway through a stream and shows the next window
+reading differently — a tolerance of zero brings back the A string's period under a ringing high E, a
+median of one shows the burst five outvote, a hold of zero clears at the first silent window — and a
+new filter never puts a steady tone's reading off for more than one hop.
 
 **`program/tuner/lowE.s16` is a real low E**: the user's own guitar, an unplugged electric, played
 into a MacBook's built-in microphone — 9.5 s of 48 kHz mono, signed 16-bit little-endian, no header.

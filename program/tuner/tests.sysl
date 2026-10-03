@@ -389,3 +389,294 @@ a_high_e_over_the_a_string_ringing_under_it_shows_e4_and_never_a2_or_e2()
                 None -> ()
 
         assert(shown > 50, f"seed ${seed} showed E4 for only ${shown} chunks")
+
+// ## Settings changed while the stream runs
+//
+// Each test below feeds two pipelines the same samples, changes one setting on one of them partway
+// through, and shows the two disagree from the next window on — so a pipeline that ignored the
+// setting would fail it.
+
+private same(a: Settings, b: Settings) -> bool =
+    a.cutoff == b.cutoff && a.threshold == b.threshold && a.clarity == b.clarity &&
+    a.tolerance == b.tolerance && a.median == b.median && a.hold == b.hold && a.gate == b.gate
+
+@test
+the_default_settings_are_the_ones_the_tuner_shipped_with()
+    val d = settings()
+
+    assert(d.cutoff == 65.0 && d.threshold == f32(0.2) && d.clarity == f32(0.8), "cutoff, threshold, clarity")
+    assert(d.tolerance == f32(0.1) && d.median == 5 && d.hold == 1.0 && d.gate == f32(0.001),
+           "tolerance, median, hold, gate")
+    assert(same(pipeline().current(), d), "a new pipeline runs on them")
+    assert(same(controls().settings(), d), "and so do new controls")
+
+// What the recording reads after its first `skip` samples, with the settings changed at that point.
+private watch_after(skip: usize, change: Settings) -> Showing
+    val r = recording()
+    var t = pipeline()
+
+    t.feed(r[0..<skip])
+    t.adjust(change)
+    watch(&t, r[skip..<r.len])
+end watch_after
+
+// Where the string is sounding in the recording: after the pluck, before most of it.
+private const PLUCKED: usize = 24000
+
+@test
+raising_the_clarity_mid_stream_keeps_the_frames_it_no_longer_trusts_out()
+    var strict = settings()
+    strict.clarity = 0.99
+
+    val before = watch_after(PLUCKED, settings())
+    val after = watch_after(PLUCKED, strict)
+
+    assert(before.e2 > 100, f"E2 for ${before.e2} chunks under the defaults")
+    assert(after.e2 * 4 < before.e2, f"E2 for ${after.e2} chunks at a clarity of 0.99, ${before.e2} without")
+
+// How many windows of the recording after `skip` read any period at all, before the clarity cut.
+private periods_after(skip: usize, change: Settings) -> usize
+    val r = recording()
+    var t = pipeline()
+    var found: usize = 0
+
+    t.feed(r[0..<skip])
+    t.adjust(change)
+
+    var from = skip
+
+    while from + HOP <= r.len
+        t.feed(r[from..<from + HOP])
+        from += HOP
+
+        if t.last().is_some() then found += 1
+
+    found
+end periods_after
+
+@test
+lowering_the_threshold_mid_stream_finds_fewer_periods()
+    var strict = settings()
+    strict.threshold = 0.05
+
+    val before = periods_after(PLUCKED, settings())
+    val after = periods_after(PLUCKED, strict)
+
+    assert(after * 2 < before, f"$after windows with a period at a threshold of 0.05, $before at 0.2")
+
+@test
+the_clarity_cut_comes_after_the_raw_reading()
+    // The raw reading is what the detector answered, so a stricter clarity drops frames without
+    // changing which ones had a period.
+    var strict = settings()
+    strict.clarity = 0.99
+
+    assert_eq(periods_after(PLUCKED, strict), periods_after(PLUCKED, settings()), "the same windows had a period")
+
+@test
+a_tolerance_of_zero_mid_stream_brings_back_the_subharmonic()
+    // The A string's period is three of E4's, and without the correction the noisy frames read it.
+    var off = settings()
+    off.tolerance = 0.0
+
+    var low_on: usize = 0
+    var low_off: usize = 0
+
+    for seed in 1..<5
+        val signal = ringing_e4(seconds(1.0), seed)
+        var corrected = pipeline()
+        var uncorrected = pipeline()
+
+        corrected.feed(signal[0..<WINDOW])
+        uncorrected.feed(signal[0..<WINDOW])
+        uncorrected.adjust(off)
+
+        var from = WINDOW
+
+        while from + HOP <= signal.len
+            corrected.feed(signal[from..<from + HOP])
+            uncorrected.feed(signal[from..<from + HOP])
+            from += HOP
+
+            if corrected.last().map(e -> e.frequency < 200.0).unwrap_or(false) then low_on += 1
+            if uncorrected.last().map(e -> e.frequency < 200.0).unwrap_or(false) then low_off += 1
+
+    assert_eq(low_on, 0, "the correction reads no window an octave and a fifth low")
+    assert(low_off > 0, "with no correction, a window reads the A string's period")
+
+@test
+a_median_of_one_mid_stream_shows_the_burst_the_median_of_five_rejected()
+    var single = settings()
+    single.median = 1
+
+    var t = pipeline()
+    var at: usize = 0
+    var shown_g = false
+
+    for hop in 0..<30
+        if hop == 10 then t.adjust(single)
+
+        val f = if hop == 20 || hop == 21 then 196.0 else 110.0
+        t.feed(tone(f, HOP, at))
+        at += HOP
+
+        if hop >= 4 && hop < 20 then assert_eq(heard(t).label(), "A2", f"hop $hop")
+        if t.note().map(n -> n.label()) == Some("G3") then shown_g = true
+
+    assert(shown_g, "the window that heard only the G is shown, there being nothing to outvote it")
+
+@test
+shortening_the_median_keeps_the_latest_readings()
+    var s = smoother()
+    for f in [110.0, 110.0, 110.0, 500.0, 500.0] do s.push(f32(f))
+
+    assert(s.value() == Some(f32(110.0)), "three of five are 110")
+
+    s.resize(3)
+    assert(s.value() == Some(f32(500.0)), f"the latest three are 110, 500, 500: ${s.value()}")
+
+    s.resize(9)
+    s.push(f32(500.0))
+    assert(s.value() == Some(f32(500.0)), "growing keeps what was held")
+
+@test
+a_hold_of_zero_clears_at_the_first_window_that_hears_nothing()
+    var none = settings()
+    none.hold = 0.0
+
+    var held = pipeline()
+    var cleared = pipeline()
+
+    held.feed(tone(110.0, seconds(0.5)))
+    held.feed(silence(WINDOW + HOP))
+    cleared.feed(tone(110.0, seconds(0.5)))
+    cleared.feed(silence(WINDOW + HOP))
+
+    // Every window read so far has had some of the tone in it, and both still show it.
+    assert(held.pitch().is_some() && cleared.pitch().is_some(), "both show A2 until the change")
+
+    cleared.adjust(none)
+    held.feed(silence(HOP + 1))
+    cleared.feed(silence(HOP + 1))
+
+    assert(held.pitch().is_some(), "the default hold keeps A2 up")
+    assert(cleared.pitch().is_none(), "no hold clears it at the next window")
+
+@test
+a_longer_hold_mid_stream_keeps_the_note_past_a_second()
+    var longer = settings()
+    longer.hold = 2.5
+
+    var t = pipeline()
+    t.feed(tone(110.0, seconds(0.5)))
+    t.adjust(longer)
+    t.feed(silence(seconds(2.0)))
+
+    assert(t.note().map(n -> n.label()) == Some("A2"), "held 2 s after the string stopped")
+
+    t.feed(silence(seconds(0.7)))
+    assert(t.pitch().is_none(), "cleared 2.7 s after")
+
+@test
+raising_the_cutoff_mid_stream_takes_the_low_e_fundamental_out_of_the_level()
+    var high = settings()
+    high.cutoff = 150.0
+
+    var t = pipeline()
+    var at = seconds(0.5)
+    t.feed(tone(82.4069, at))
+
+    val before = t.level()
+
+    t.adjust(high)
+    t.feed(tone(82.4069, HOP, at))
+
+    val next = t.level()
+
+    t.feed(tone(82.4069, HOP, at + HOP))
+
+    val after = t.level()
+
+    assert(next < before - 1.0, f"the next window is quieter: $before dB, then $next")
+    assert(after < before - 4.0, f"a window wholly through the new filter is $after dB, against $before")
+
+@test
+a_new_filter_glitches_a_steady_reading_for_at_most_one_hop()
+    for cutoff in [20.0, 150.0]
+        var change = settings()
+        change.cutoff = cutoff
+
+        var t = pipeline()
+        var at: usize = 0
+        var off: usize = 0
+
+        for hop in 0..<40
+            if hop == 15 then t.adjust(change)
+
+            t.feed(tone(329.6276, HOP, at))
+            at += HOP
+
+            if hop >= 6
+                val n = heard(t)
+
+                if n.midi != 64 || n.cents.abs() > 1.0 then off += 1
+
+        assert(off <= 1, f"a cutoff of $cutoff put the reading off for $off hops")
+
+@test
+raising_the_gate_mid_stream_silences_a_quiet_tone()
+    val n = seconds(0.5)
+    var quiet = tone(110.0, n + HOP)
+    for j in 0..<quiet.len do quiet[j] *= 0.02
+
+    var t = pipeline()
+    t.feed(quiet[0..<n])
+    assert(t.last().is_some(), f"a tone at ${t.level()} dB is heard under the default gate")
+
+    var deaf = settings()
+    deaf.gate = from_dbfs(-30.0)
+
+    t.adjust(deaf)
+    t.feed(quiet[n..<n + HOP])
+    assert(t.last().is_none(), "the next window is silence under a gate at -30 dB")
+
+@test
+resetting_restores_the_defaults()
+    val c = controls()
+
+    c.cutoff.set(140.0)
+    c.threshold.set(0.4)
+    c.clarity.set(0.6)
+    c.tolerance.set(0.0)
+    c.median.set(9)
+    c.hold.set(2.5)
+    c.gate.set(-30.0)
+    assert(!same(c.settings(), settings()), "the controls moved")
+
+    var t = pipeline()
+    t.adjust(c.settings())
+
+    c.reset()
+    assert(same(c.settings(), settings()), "every control is back")
+
+    t.adjust(c.settings())
+    assert(same(t.current(), settings()), "and so is the pipeline")
+
+    // And it behaves as a new one does: the burst a median of five rejects is rejected again.
+    var at: usize = 0
+
+    for hop in 0..<30
+        val f = if hop == 20 || hop == 21 then 196.0 else 110.0
+        t.feed(tone(f, HOP, at))
+        at += HOP
+
+        if hop >= 4 then assert_eq(heard(t).label(), "A2", f"hop $hop")
+
+@test
+the_gate_in_decibels_round_trips_at_both_ends()
+    assert((from_dbfs(GATE_LEAST_DB) - f32(0.0001)).abs() < f32(1e-9), f"-80 dB is ${from_dbfs(GATE_LEAST_DB)}")
+    assert((dbfs(from_dbfs(GATE_LEAST_DB)) - GATE_LEAST_DB).abs() < 1e-4, "and back")
+    assert((from_dbfs(GATE_MOST_DB) - f32(0.0501187)).abs() < f32(1e-6), f"-26 dB is ${from_dbfs(GATE_MOST_DB)}")
+    assert((dbfs(from_dbfs(GATE_MOST_DB)) - GATE_MOST_DB).abs() < 1e-4, "and back")
+    assert(from_dbfs(GATE_DB) == GATE, "the default is the detector's own gate, exactly")
+    assert(dbfs(0.0) == -120.0, "silence is a number")

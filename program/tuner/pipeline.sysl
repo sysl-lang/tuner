@@ -8,9 +8,13 @@ module tuner
 // unit test all hand over slices of whatever length they happen to have, and every decision below is
 // counted in samples rather than in seconds of wall clock — so the same samples give the same answer
 // however they were chunked, and a test can run a second of audio in a millisecond.
+//
+// **What can be adjusted while it runs is a `Settings`**, handed over with `adjust` as often as the
+// caller likes. Each takes effect from the next window read; the stream is never restarted.
 
-import sh.sysl.pitch.{Detector, HighPass, Note, cents_from, detector, frequency_of, highpass, note_of}
-import sysl.math.{Float, min}
+import sh.sysl.pitch.{Detector, Estimate, HighPass, Note, cents_from, detector, frequency_of, highpass,
+                      note_of, rms}
+import sysl.math.{Float, max, min}
 import sysl.slices.sort_by
 
 /** Samples a second, which the microphone is asked for and the detector is built for. */
@@ -37,7 +41,12 @@ const HOP: usize = 1024
  */
 const MEDIAN_OF: usize = 5
 
-/** Readings needed before anything is shown, so that one stray frame of noise never names a note. */
+/** The longest median that can be asked for. */
+const MEDIAN_MOST: usize = 9
+
+/** Readings needed before anything is shown, so that one stray frame of noise never names a note —
+ * or all of them, when the median is taken over fewer.
+ */
 const AGREE: usize = 3
 
 /** Where the high-pass filter ahead of the window is cut: a little under a guitar's low E at
@@ -65,47 +74,90 @@ const CLARITY: f32 = 0.8
  */
 const SWITCH: real = 60.0
 
-/** How long the last note stays up after the signal stops: one second, counted in samples. */
-const HOLD: usize = 48000
+/** How long the last note stays up after the signal stops, in seconds. */
+const HOLD: real = 1.0
+
+/** The detector's own subharmonic tolerance and silence gate, restated so that a `Settings` can carry
+ * them: a reading may be a half, a third or a quarter of the first period found if its dip is within
+ * 0.1 of that one's, and a frame under an RMS of 0.001 — 60 dB below full scale — is silence.
+ */
+const TOLERANCE: f32 = 0.1
+const GATE: f32 = 0.001
+
+/** Everything about the detection that can be changed while it runs. */
+struct Settings
+    cutoff: real        // the high-pass filter's corner, in Hz
+    threshold: f32      // how deep YIN's dip has to be to count as a period
+    clarity: f32        // how sure a frame has to be for its reading to enter the median
+    tolerance: f32      // the detector's subharmonic tolerance; zero turns the correction off
+    median: usize       // how many readings the median is taken over, 1 to `MEDIAN_MOST`
+    hold: real          // how long the last note stays up after the signal stops, in seconds
+    gate: f32           // the RMS level below which a frame is silence
+
+/** The settings the tuner ships with. */
+settings() -> Settings = Settings(CUTOFF, THRESHOLD, CLARITY, TOLERANCE, MEDIAN_OF, HOLD, GATE)
 
 /** The latest readings, and the median of them. */
 struct Smoother
-    private recent: [MEDIAN_OF]f32
+    private recent: [MEDIAN_MOST]f32
+    private length: usize
     private count: usize
     private next: usize
 
-    /** Add a reading, displacing the oldest once there are `MEDIAN_OF` of them. */
+    /** Add a reading, displacing the oldest once there are `length` of them. */
     push(*self, f: f32)
         self.recent[self.next] = f
-        self.next = (self.next + 1) % MEDIAN_OF
+        self.next = (self.next + 1) % self.length
 
-        if self.count < MEDIAN_OF then self.count += 1
+        if self.count < self.length then self.count += 1
     end push
 
-    /** The median of the readings held, once there are at least `AGREE` of them. With an even count
-     * it is the lower of the middle two, which is a reading somebody's string actually produced.
+    /** The median of the readings held, once there are at least `AGREE` of them, or all of them for a
+     * shorter median. With an even count it is the lower of the middle two, which is a reading
+     * somebody's string actually produced.
      */
     value(self) -> Option[f32]
-        if self.count < AGREE then return None
+        if self.count < min(AGREE, self.length) then return None
 
-        var sorted: [MEDIAN_OF]f32 = self.recent
+        var sorted: [MEDIAN_MOST]f32 = self.recent
         var held = sorted[0..<self.count]
 
         sort_by(held, (a, b) -> a < b)
         Some(held[(self.count - 1) / 2])
     end value
 
+    /** Take the median over `n` readings from now on, keeping the latest of those already held. */
+    resize(*self, n: usize)
+        val length = max(1, min(n, MEDIAN_MOST))
+
+        if length == self.length then return
+
+        val kept = min(self.count, length)
+        var latest: [MEDIAN_MOST]f32 = [0.0; MEDIAN_MOST]
+
+        for i in 0..<kept do latest[i] = self.recent[(self.next + self.length - kept + i) % self.length]
+
+        self.recent = latest
+        self.length = length
+        self.count = kept
+        self.next = kept % length
+    end resize
+
     clear(*self)
         self.count = 0
         self.next = 0
 end Smoother
 
-smoother() -> Smoother = Smoother([0.0; MEDIAN_OF], 0, 0)
+smoother(length: usize = MEDIAN_OF) -> Smoother =
+    Smoother([0.0; MEDIAN_MOST], max(1, min(length, MEDIAN_MOST)), 0, 0)
 
 /** The whole pipeline: feed it samples, read the pitch. */
 struct Pipeline
     private detector: Detector[f32]
-    private clarity: f32
+    private settings: Settings
+
+    // The hold, counted in samples.
+    private hold: usize
 
     // The high-pass filter every sample goes through on its way into the window, and the buffer it
     // filters in, since what a caller hands over is the caller's.
@@ -126,6 +178,10 @@ struct Pipeline
 
     private smoothed: Smoother
     private detections: usize
+
+    // What the last window read, before the clarity cut and the median, and how loud it was.
+    private raw: Option[Estimate[f32]]
+    private loudness: f32
 
     // The note on show, as a MIDI number, and the A4 it is reckoned against.
     private shown: Option[int]
@@ -157,7 +213,9 @@ struct Pipeline
         self.fresh += 1
         self.since += 1
 
-        if self.since == HOLD
+        // A hold shorter than a hop still waits for one window to go uncounted, or the readings would
+        // be cleared between every two that count and three would never agree.
+        if self.since >= max(self.hold, HOP + 1)
             self.smoothed.clear()
             self.shown = None
 
@@ -170,15 +228,51 @@ struct Pipeline
 
         for i in 0..<WINDOW do self.frame[i] = self.ring[(self.at + i) % WINDOW]
 
-        self.detector.detect(self.frame) match
-            Ok(Some(e)) ->
-                if e.clarity >= self.clarity
-                    self.smoothed.push(e.frequency)
-                    self.since = 0
+        self.loudness = rms(self.frame)
+
+        self.raw = self.detector.detect(self.frame) match
+            Ok(Some(e)) -> Some(e)
+            _ -> None
+
+        self.raw match
+            Some(e) if e.clarity >= self.settings.clarity ->
+                self.smoothed.push(e.frequency)
+                self.since = 0
             _ -> ()
 
         self.settle()
     end detect
+
+    /** Detect with `s` from the next window on. A new cutoff starts a new filter, whose state begins
+     * at rest; everything else carries over, the median keeping the latest of the readings it holds.
+     * A cutoff the filter cannot be built for is left as it was.
+     */
+    adjust(*self, wanted: Settings)
+        var s = wanted
+
+        if s.cutoff != self.settings.cutoff
+            highpass(f32(RATE), f32(s.cutoff)) match
+                Ok(hp) -> self.filter = hp
+                Err(_) -> s.cutoff = self.settings.cutoff
+
+        self.detector.threshold = s.threshold
+        self.detector.subharmonic_tolerance = s.tolerance
+        self.detector.gate = s.gate
+        self.smoothed.resize(s.median)
+        self.hold = usize(max(s.hold, 0.0) * real(RATE))
+        self.settings = s
+    end adjust
+
+    /** The settings in force. */
+    current(self) -> Settings = self.settings
+
+    /** What the last window read, unsmoothed and before the clarity cut — `None` for silence or a
+     * frame with no period in it — so that a frame the cut dropped can be seen.
+     */
+    last(self) -> Option[Estimate[f32]] = self.raw
+
+    /** The RMS level of the last window read, after the filter, in dB below full scale. */
+    level(self) -> real = dbfs(self.loudness)
 
     // Keep the note on show while the pitch stays within `SWITCH` cents of it; past that, show the
     // nearest note instead.
@@ -191,7 +285,7 @@ struct Pipeline
     end settle
 
     /** The pitch being played, in Hz — the median of the latest readings — or `None` when nothing
-     * has been heard for `HOLD` samples.
+     * has been heard for the hold.
      */
     pitch(self) -> Option[real] = self.smoothed.value().map(f -> real(f))
 
@@ -219,11 +313,22 @@ end Pipeline
  * each one is for.
  */
 pipeline(threshold: f32 = THRESHOLD, clarity: f32 = CLARITY, filtering: bool = true) -> Pipeline
+    var s = settings()
+    s.threshold = threshold
+    s.clarity = clarity
+
     var d = detector(f32(RATE), f32(LOWEST), f32(HIGHEST)).expect("the range fits the rate")
-    d.threshold = threshold
+    val hp = highpass(f32(RATE), f32(s.cutoff)).expect("the cutoff fits the rate")
+    val hold = usize(s.hold * real(RATE))
 
-    val hp = highpass(f32(RATE), f32(CUTOFF)).expect("the cutoff fits the rate")
-
-    Pipeline(d, clarity, hp, filtering, [0.0; HOP], [0.0; WINDOW], [0.0; WINDOW], 0, 0, 0, HOLD,
-             smoother(), 0, None, 440.0)
+    var t = Pipeline(d, s, hold, hp, filtering, [0.0; HOP], [0.0; WINDOW], [0.0; WINDOW], 0, 0, 0, hold,
+                     smoother(s.median), 0, None, 0.0, None, 440.0)
+    t.adjust(s)
+    t
 end pipeline
+
+/** An RMS level as decibels below full scale, with silence at -120 rather than minus infinity. */
+dbfs(level: f32) -> real = if level > 0.0 then max(20.0 * real(level).log10(), -120.0) else -120.0
+
+/** The level `db` decibels below full scale names — `dbfs`'s inverse. */
+from_dbfs(db: real) -> f32 = f32((10.0).pow(db / 20.0))

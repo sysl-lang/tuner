@@ -1,0 +1,58 @@
+module tuner
+
+import sh.sysl.ui.{Signal, signal}
+
+/** The silence gate as the screen offers it, in decibels below full scale: 60 dB down is the
+ * detector's RMS of 0.001.
+ *
+ * **The gate is set in decibels because its range is five hundred to one.** An RMS from 0.0001 to
+ * 0.05 on a linear slider would put the default 0.001 six pixels from the left end of a 320-point track, and every setting
+ * a room actually needs in the first tenth of the track. In decibels the same range is -80 to -26,
+ * each one-decibel step is the same 12% change in level wherever it is on the track, and the number
+ * reads on the same scale as the input meter beside it — so the gate can be set by eye a few
+ * decibels above what the room reads with nothing playing.
+ */
+const GATE_DB: real = -60.0
+const GATE_LEAST_DB: real = -80.0
+const GATE_MOST_DB: real = -26.0
+
+/** The detection settings as the screen holds them: a signal for each, which a slider writes and
+ * the frame loop reads.
+ */
+struct Controls
+    cutoff: &Signal[real]
+    threshold: &Signal[real]
+    clarity: &Signal[real]
+    tolerance: &Signal[real]
+    median: &Signal[int]
+    hold: &Signal[real]
+    gate: &Signal[real]         // in decibels below full scale
+
+    /** The settings the signals hold now. */
+    settings(self) -> Settings
+        Settings(self.cutoff.read(), f32(self.threshold.read()), f32(self.clarity.read()),
+                 f32(self.tolerance.read()), usize(self.median.read()), self.hold.read(),
+                 from_dbfs(self.gate.read()))
+    end settings
+
+    /** Put every signal back to what the tuner ships with. */
+    reset(self)
+        val d = settings()
+
+        self.cutoff.set(d.cutoff)
+        self.threshold.set(real(d.threshold))
+        self.clarity.set(real(d.clarity))
+        self.tolerance.set(real(d.tolerance))
+        self.median.set(int(d.median))
+        self.hold.set(d.hold)
+        self.gate.set(GATE_DB)
+    end reset
+end Controls
+
+/** Controls holding the settings the tuner ships with. */
+controls() -> Controls
+    val d = settings()
+
+    Controls(signal(d.cutoff), signal(real(d.threshold)), signal(real(d.clarity)), signal(real(d.tolerance)),
+             signal(int(d.median)), signal(d.hold), signal(GATE_DB))
+end controls
