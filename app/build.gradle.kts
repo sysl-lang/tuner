@@ -118,7 +118,7 @@ android {
         // Yours to bump when you ship. `versionCode` is what Android compares between installs and
         // must only ever go up; `versionName` is shown to a person, and is the program's own
         // `version` — read from its manifest, so the number lives in one place.
-        versionCode = 6
+        versionCode = 7
         versionName = programVersion
 
         externalNativeBuild {

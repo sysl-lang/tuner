@@ -149,3 +149,39 @@ reset_restores_the_settings()
     assert_eq(m.controls.threshold.read(), real(settings().threshold))
     assert_eq(m.controls.median.read(), int(settings().median))
 end reset_restores_the_settings
+
+// The open section's viewport on a screen `h` points tall, as (top, height), and where the A4
+// row's minus button starts — read from the recording, the `clip` line being the scroll's window.
+private viewport(h: int) -> (int, int, int)
+    var c = recorder()
+
+    render(screen(model(true)), &c, Rect(0, 0, 400, h))
+
+    var top = -1
+    var height = -1
+    var a4 = -1
+
+    for line in split(c.dump(), "\n")
+        if line.starts_with("clip ")
+            val words = split(line, " ")
+
+            top = parse_int(split(words[1], ",")[1]).expect("y")
+            height = parse_int(split(words[2], "x")[1]).expect("h")
+
+        if line.starts_with("fill ") && line.contains(" 40x32 ")
+            a4 = parse_int(split(split(line, " ")[1], ",")[1]).expect("y")
+
+    (top, height, a4)
+end viewport
+
+@test("the open settings fill the height left between the meter and the A4 row")
+the_settings_fill_the_spare_height()
+    val (top_a, tall_a, a4_a) = viewport(800)
+    val (top_b, tall_b, a4_b) = viewport(1100)
+
+    assert(tall_a > 0, "the viewport is drawn")
+    assert_eq(top_b, top_a)
+    assert_eq(tall_b - tall_a, 300)
+    assert_eq(a4_b - a4_a, 300)
+    assert_eq(a4_a - (top_a + tall_a), a4_b - (top_b + tall_b))
+end the_settings_fill_the_spare_height

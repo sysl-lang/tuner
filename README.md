@@ -12,7 +12,7 @@ The same program runs on a Mac, where a synthesized tone can stand in for the mi
 | coordinate | version | what it does here |
 |---|---|---|
 | `skitter` | 0.1.0 | the Android activity, the Gradle build, the system bars |
-| `syslui` | 0.1.6 | the interface — `meter`, `.font_size` for the note name, `slider` for the Detection settings and `scroll` for the section they sit in |
+| `syslui` | 0.1.7 | the interface — `meter`, `.font_size` for the note name, `slider` for the Detection settings and `scroll(...).flex()` for the section they sit in, which fills the height left over |
 | `syslui-sdl` | 0.2.2 | the window and frame loop; `on_frame` is where the microphone is drained, and a tap lands when the finger lifts |
 | `sdl3` | 0.3.2 | `open_recording_stream`, which also asks for the permission |
 | `pitch` | 0.1.2 | YIN pitch detection, the high-pass filter ahead of it, subharmonic correction, and the note arithmetic |

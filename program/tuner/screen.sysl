@@ -18,12 +18,6 @@ const SLIDER_W: int = 172
 const VALUE_W: int = 64
 const ROW_H: int = 22
 
-/** How tall the open Detection section's window is: the room left under the header on an 800-point
- * screen once the note, the meter and the A4 buttons have theirs. The settings scroll inside it, so
- * every row keeps a finger's spacing however short the screen is.
- */
-const PANEL_H: int = 230
-
 /** What the screen reads. Signals, so that writing one rebuilds the tree. */
 struct Model
     frequency: &Signal[real]       // the pitch heard, 0.0 for none
@@ -141,13 +135,13 @@ screen(m: &Model) -> &View
 
     val body = column(spacing = 28):
         centred(text("Tuner").text_style(TextStyle.Title))
-        spacer()
+        spacer().flex(if m.open.read() then 0 else 1)
         shown match
             Some(n) -> reading(n, f)
             None -> quiet()
         centred(text(status))
-        if m.open.read() then column([toggle(m), scroll(detection(m), m.scrolled, PANEL_H)], 8) else toggle(m)
-        spacer()
+        toggle(m)
+        if m.open.read() then scroll(detection(m), m.scrolled).flex() else spacer()
         centred(row([button("−", step_a4(m, -1), Role.Secondary),
                      text(s"A4 = ${m.a4.read()} Hz").padding(6),
                      button("+", step_a4(m, 1), Role.Secondary)], 10))
