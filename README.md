@@ -15,7 +15,7 @@ The same program runs on a Mac, where a synthesized tone can stand in for the mi
 | `syslui` | 0.1.3 | the interface — `meter`, and `.font_size` for the note name |
 | `syslui-sdl` | 0.2.1 | the window and frame loop; `on_frame` is where the microphone is drained |
 | `sdl3` | 0.3.2 | `open_recording_stream`, which also asks for the permission |
-| `pitch` | 0.1.1 | YIN pitch detection, the high-pass filter ahead of it, and the note arithmetic |
+| `pitch` | 0.1.2 | YIN pitch detection, the high-pass filter ahead of it, subharmonic correction, and the note arithmetic |
 
 `syslui` and `sdl3` are named directly although other coordinates bring them, because resolution
 takes the highest version anybody asks for and the ones they ask for are older.

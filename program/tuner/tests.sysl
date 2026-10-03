@@ -340,3 +340,52 @@ chunked_delivery_reads_exactly_what_one_chunk_reads()
 
     assert(chunked.windows() == whole.windows(), "the same windows were read")
     assert(chunked.pitch() == whole.pitch(), f"${chunked.pitch()} against ${whole.pitch()}")
+
+// A plucked high E — five partials — over a quieter A string ringing in sympathy a twelfth below it
+// (E4 is A2's third harmonic), under white noise. The A's period is three of E4's, so the frame also
+// repeats every three periods, and with noise lifting the dips the first one under the threshold can
+// be the deeper one at three periods. That read A2 on the phone.
+private const HISS: real = 0.37
+
+private ringing_e4(n: usize, seed: int) -> []f32
+    val frequency = strings()[5]
+    val amplitudes = [1.0, 0.6, 0.3, 0.15, 0.08]
+    val phases = [0.3, 1.9, 4.1, 0.7, 2.6]
+    var out: []f32 = [0.0; n]
+    var r = rng(u64(seed), 11)
+
+    for h in 0..<amplitudes.len
+        val k = real(h + 1)
+        val step = 2.0 * real.pi() * k * frequency * (1.0 + 0.0001 * k * k).sqrt() / rate
+
+        for j in 0..<n do out[j] += f32(0.3 * amplitudes[h] * (step * real(j) + phases[h]).sin())
+
+    val below = 2.0 * real.pi() * frequency / 3.0 / rate
+
+    for j in 0..<n do out[j] += f32(0.09 * (below * real(j) + 1.1).sin() + HISS * (r.unit() - 0.5))
+
+    out
+end ringing_e4
+
+@test
+a_high_e_over_the_a_string_ringing_under_it_shows_e4_and_never_a2_or_e2()
+    for seed in 1..<5
+        var t = pipeline()
+        val signal = ringing_e4(seconds(1.0), seed)
+        var shown: usize = 0
+        var from: usize = 0
+
+        while from < signal.len
+            val to = min(from + 480, signal.len)
+
+            t.feed(signal[from..<to])
+            from = to
+
+            t.note() match
+                Some(n) ->
+                    assert_eq(n.midi, 64, f"seed ${seed} showed MIDI ${n.midi} rather than E4")
+                    assert(n.cents.abs() < 30.0, f"E4 off by ${n.cents} cents")
+                    shown += 1
+                None -> ()
+
+        assert(shown > 50, f"seed ${seed} showed E4 for only ${shown} chunks")

@@ -1,5 +1,6 @@
 github.com/sysl-lang/pitch v0.1.0 sha256:4773fd658b87f8a8e45cfede6022a723da92261fa4d2f97221673e29a76f1011
 github.com/sysl-lang/pitch v0.1.1 sha256:e3e3c23237ecad21050c0ebf61e50ed36b7c4f7dc4dad2fd4ddc2990487bea56
+github.com/sysl-lang/pitch v0.1.2 sha256:2246654dfe1ef40ec725d75b12950276310b70bcc8558a8484303dbe64e4867f
 github.com/sysl-lang/plutovg v0.2.1 sha256:fce0dc779820624980895c8925f094356c12711631657bb503bbd5b2239b2f9e
 github.com/sysl-lang/sdl3 v0.3.1 sha256:15f3ff23eba6f6b24947db7e3a93b6a56066eb9c2266a96450e6eb0bb8814ffe
 github.com/sysl-lang/sdl3 v0.3.2 sha256:f7faff7f30afe90615840bc239481044d82b84df610093032a8660557229f33d
