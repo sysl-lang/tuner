@@ -113,6 +113,19 @@ microphone, give it a tone instead:
 TUNER_TONE=110.5 sysl run program
 ```
 
+## Icon
+
+`icon.png` is the launcher logo: a meter arc with its in-tune band in the theme's success green, and
+the needle standing in it. It is drawn by a sysl program over PlutoVG, so to change it, edit
+`tools/icon/main.sysl` and regenerate it from this directory:
+
+```
+sysl run tools/icon
+```
+
+The picture is 1024 × 1024 on a transparent ground; the build scales it into the adaptive icon's safe
+zone and lays the dark theme's window colour, `#12141C`, behind it.
+
 ## Tests
 
 ```

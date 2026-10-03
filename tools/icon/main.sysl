@@ -1,0 +1,81 @@
+// The tuner's launcher logo: a meter arc with its in-tune band, a few ticks, and the needle standing
+// straight up in the band.
+//
+// The picture fills a transparent 1024 x 1024 canvas and draws no background of its own — Gradle
+// scales it into the adaptive icon's safe zone and lays the ground colour behind it.
+
+import sh.sysl.plutovg.{Canvas, LineCap, canvas, surface}
+import sysl.math.{Float, pi}
+
+val SIZE = 1024
+
+// Colours from syslUI's dark theme.
+val INK = 0xE6E8EF         // `ink`
+val SCALE = 0x9FA2AC       // `head_ink`: the arc, a step back from the needle
+val GREEN = 0x3E9B5F       // `success`
+
+// The meter's pivot, and the radius of the arc's centre line.
+val CX: f32 = 512.0
+val CY: f32 = 700.0
+val R: f32 = 430.0
+
+// Half the arc's sweep, and half the in-tune band's, in degrees either side of straight up.
+val HALF_SWEEP: f32 = 50.0
+val HALF_BAND: f32 = 10.0
+
+colour(cv: &Canvas, hex: int)
+    cv.rgb(f32((hex >> 16) & 0xFF) / 255.0, f32((hex >> 8) & 0xFF) / 255.0, f32(hex & 0xFF) / 255.0)
+
+// An angle measured from straight up, clockwise, in degrees — as plutovg's radians, y pointing down.
+radians(from_up: f32) -> f32 = (from_up - 90.0) * f32(pi) / 180.0
+
+arc(cv: &Canvas, from: f32, to: f32, hex: int, width: f32)
+    colour(cv, hex)
+    cv.line_width(width)
+    cv.begin()
+    cv.arc(CX, CY, R, radians(from), radians(to))
+    cv.stroke()
+
+// A radial line at `from_up` degrees, between two radii.
+spoke(cv: &Canvas, from_up: f32, r0: f32, r1: f32, hex: int, width: f32)
+    val a = radians(from_up)
+    colour(cv, hex)
+    cv.line_width(width)
+    cv.begin()
+    cv.move_to(CX + r0 * a.cos(), CY + r0 * a.sin())
+    cv.line_to(CX + r1 * a.cos(), CY + r1 * a.sin())
+    cv.stroke()
+
+val s = surface(SIZE, SIZE).unwrap()
+val cv = canvas(s).unwrap()
+
+// Drawn at 1.2 about the canvas centre, which brings the arc's ends to just inside the circle a
+// launcher's mask keeps.
+cv.translate(512.0, 512.0)
+cv.scale(1.2, 1.2)
+cv.translate(-512.0, -512.0)
+// The scale has round ends; the band is cut square, so it reads as a stretch of the scale rather than
+// a second stroke laid over it.
+cv.line_cap(LineCap.Round)
+arc(cv, -HALF_SWEEP, HALF_SWEEP, SCALE, 84.0)
+cv.line_cap(LineCap.Butt)
+arc(cv, -HALF_BAND, HALF_BAND, GREEN, 84.0)
+cv.line_cap(LineCap.Round)
+
+for t in [-38.0, -22.0, 22.0, 38.0]
+    spoke(cv, f32(t), 280.0, 340.0, SCALE, 40.0)
+
+spoke(cv, 0.0, 0.0, 350.0, INK, 64.0)
+
+colour(cv, INK)
+cv.begin()
+cv.circle(CX, CY, 88.0)
+cv.fill()
+
+colour(cv, GREEN)
+cv.begin()
+cv.circle(CX, CY, 36.0)
+cv.fill()
+
+if !s.write_png("icon.png")
+    print("could not write icon.png")

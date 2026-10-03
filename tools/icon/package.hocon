@@ -1,0 +1,15 @@
+// Draws the tuner's launcher logo and writes it to `icon.png`.
+package {
+  name    = "tuner-icon"
+  version = "0.1.0"
+  sysl    = "0.0.160"
+}
+
+dependencies {
+  plutovg { git = "github.com/sysl-lang/plutovg", version = "0.2.1" }
+}
+
+requires {
+  heap = true
+  os   = true
+}
