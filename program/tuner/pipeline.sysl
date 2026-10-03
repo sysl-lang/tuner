@@ -1,0 +1,148 @@
+module tuner
+
+// From samples to the pitch a tuner shows: a sliding window, a detection every hop, a median over
+// the last few answers, and a hold after the string stops ringing.
+//
+// **Nothing here knows where the samples come from.** The microphone, a synthesized test tone and a
+// unit test all hand over slices of whatever length they happen to have, and every decision below is
+// counted in samples rather than in seconds of wall clock — so the same samples give the same answer
+// however they were chunked, and a test can run a second of audio in a millisecond.
+
+import sh.sysl.pitch.{Detector, Note, detector, note_of}
+import sysl.slices.sort_by
+
+/** Samples a second, which the microphone is asked for and the detector is built for. */
+const RATE: int = 48000
+
+/** The range listened to: below a drop-D guitar's low string and above its highest fretted note. */
+const LOWEST: real = 70.0
+const HIGHEST: real = 1400.0
+
+/** The samples each detection reads: 43 ms at 48 kHz.
+ *
+ * YIN needs two periods of the lowest frequency, which at 70 Hz is 1374 samples; the next power of two
+ * above that gives every lag at least one whole period to be compared over, with room to spare, and
+ * three and a half periods of a low E. A longer window reads a steadier pitch and lags the string by
+ * more, and a tuner is read while it is being played.
+ */
+const WINDOW: usize = 2048
+
+/** New samples between detections: half a window, so 47 readings a second and each sample read twice. */
+const HOP: usize = 1024
+
+/** How many of the latest readings the median is taken over. Five outvotes two bad frames, and an
+ * interruption one hop long spoils exactly two windows.
+ */
+const MEDIAN_OF: usize = 5
+
+/** Readings needed before anything is shown, so that one stray frame of noise never names a note. */
+const AGREE: usize = 3
+
+/** How sure a frame has to be to count — one minus the depth of YIN's dip. The detector's own
+ * threshold already demands 0.88; this asks for a little more, which costs a frame or two at the
+ * start of a pluck and keeps the frames where the string is being touched out of the median.
+ */
+const CLARITY: f32 = 0.9
+
+/** How long the last note stays up after the signal stops: one second, counted in samples. */
+const HOLD: usize = 48000
+
+/** The latest readings, and the median of them. */
+struct Smoother
+    private recent: [MEDIAN_OF]f32
+    private count: usize
+    private next: usize
+
+    /** Add a reading, displacing the oldest once there are `MEDIAN_OF` of them. */
+    push(*self, f: f32)
+        self.recent[self.next] = f
+        self.next = (self.next + 1) % MEDIAN_OF
+
+        if self.count < MEDIAN_OF then self.count += 1
+    end push
+
+    /** The median of the readings held, once there are at least `AGREE` of them. With an even count
+     * it is the lower of the middle two, which is a reading somebody's string actually produced.
+     */
+    value(self) -> Option[f32]
+        if self.count < AGREE then return None
+
+        var sorted: [MEDIAN_OF]f32 = self.recent
+        var held = sorted[0..<self.count]
+
+        sort_by(held, (a, b) -> a < b)
+        Some(held[(self.count - 1) / 2])
+    end value
+
+    clear(*self)
+        self.count = 0
+        self.next = 0
+end Smoother
+
+smoother() -> Smoother = Smoother([0.0; MEDIAN_OF], 0, 0)
+
+/** The whole pipeline: feed it samples, read the pitch. */
+struct Pipeline
+    private detector: Detector[f32]
+
+    // The last `WINDOW` samples, as a ring with `at` the oldest, and the same samples laid out in
+    // order for the detector.
+    private ring: []f32
+    private frame: []f32
+    private at: usize
+    private filled: usize
+
+    // Samples since the last detection, and since the last frame that counted.
+    private fresh: usize
+    private since: usize
+
+    private smoothed: Smoother
+    private detections: usize
+
+    /** Hand over samples as they arrive, in chunks of any length, empty ones included. */
+    feed(*self, samples: []const f32)
+        for s in samples
+            self.ring[self.at] = s
+            self.at = (self.at + 1) % WINDOW
+
+            if self.filled < WINDOW then self.filled += 1
+
+            self.fresh += 1
+            self.since += 1
+
+            if self.since == HOLD then self.smoothed.clear()
+
+            if self.filled == WINDOW && self.fresh >= HOP then self.detect()
+    end feed
+
+    private detect(*self)
+        self.fresh = 0
+        self.detections += 1
+
+        for i in 0..<WINDOW do self.frame[i] = self.ring[(self.at + i) % WINDOW]
+
+        self.detector.detect(self.frame) match
+            Ok(Some(e)) ->
+                if e.clarity >= CLARITY
+                    self.smoothed.push(e.frequency)
+                    self.since = 0
+            _ -> ()
+    end detect
+
+    /** The pitch being played, in Hz — the median of the latest readings — or `None` when nothing
+     * has been heard for `HOLD` samples.
+     */
+    pitch(self) -> Option[real] = self.smoothed.value().map(f -> real(f))
+
+    /** The nearest note to the pitch, against `a4`. */
+    note(self, a4: real = 440.0) -> Option[Note[real]] = note_of(self.pitch()?, a4)
+
+    /** How many windows have been read so far — one every `HOP` samples once the first is full. */
+    windows(self) -> usize = self.detections
+end Pipeline
+
+pipeline() -> Pipeline
+    val d = detector(f32(RATE), f32(LOWEST), f32(HIGHEST)).expect("the range fits the rate")
+
+    Pipeline(d, [0.0; WINDOW], [0.0; WINDOW], 0, 0, 0, HOLD, smoother(), 0)
+end pipeline

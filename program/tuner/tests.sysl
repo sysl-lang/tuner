@@ -1,0 +1,164 @@
+module tuner
+@tests
+
+import sh.sysl.pitch.{Note, cents_from}
+import sysl.math.Float
+import sysl.rand.rng
+
+// What the pipeline claims, run by `sysl test program`.
+//
+// **Every tone is synthesized from a frequency chosen in advance**, so each reading is checked against
+// the number the signal was built from. A tone carries three harmonics rather than being a bare sine,
+// the way a string does.
+
+private const rate: real = 48000.0
+
+// The six open strings of a guitar in standard tuning, low E to high E, with their MIDI numbers.
+private strings() -> [6]real = [82.4069, 110.0, 146.8324, 195.9977, 246.9417, 329.6276]
+private midis() -> [6]int = [40, 45, 50, 55, 59, 64]
+
+// `n` samples of a tone starting at sample `from`, so consecutive calls continue one waveform.
+private tone(frequency: real, n: usize, from: usize = 0) -> []f32
+    var out: []f32 = [0.0; n]
+    val step = 2.0 * real.pi() * frequency / rate
+
+    for j in 0..<n
+        val t = step * real(from + j)
+        out[j] = f32(0.3 * t.sin() + 0.15 * (2.0 * t).sin() + 0.08 * (3.0 * t).sin())
+
+    out
+end tone
+
+private silence(n: usize) -> []f32 = [0.0; n]
+
+private seconds(s: real) -> usize = usize(s * rate)
+
+private heard(t: Pipeline) -> Note[real] = t.note().expect("a note")
+
+@test
+a_steady_tone_at_each_open_string_reads_its_note_within_a_cent()
+    for i in 0..<6
+        var t = pipeline()
+        t.feed(tone(strings()[i], seconds(0.5)))
+
+        val n = heard(t)
+        assert(n.midi == midis()[i], f"${strings()[i]} Hz reads as ${n.label()}")
+        assert(n.cents.abs() < 1.0, f"${strings()[i]} Hz reads ${n.cents} cents off")
+
+@test
+a_tone_ten_cents_sharp_reads_plus_ten()
+    var t = pipeline()
+    t.feed(tone(110.0 * (10.0 / 1200.0).exp2(), seconds(0.5)))
+
+    val n = heard(t)
+    assert(n.label() == "A2", f"reads as ${n.label()}")
+    assert((n.cents - 10.0).abs() < 1.0, f"reads ${n.cents} cents")
+
+@test
+the_reference_pitch_moves_the_cents()
+    var t = pipeline()
+    t.feed(tone(110.0, seconds(0.5)))
+
+    // A2 against A4 = 442 Hz is 110.5 Hz, so a 110 Hz string is flat by 1200 log2(110.5 / 110).
+    val n = t.note(442.0).expect("a note")
+    assert((n.cents - cents_from(110.0, 110.5)).abs() < 1.0, f"reads ${n.cents} cents")
+
+@test
+silence_says_play_a_string()
+    var t = pipeline()
+    t.feed(silence(seconds(1.0)))
+
+    assert(t.pitch().is_none(), "silence has no pitch")
+    assert(t.windows() > 40, "and it was listened to")
+
+@test
+nothing_is_shown_until_three_windows_agree()
+    var t = pipeline()
+    t.feed(tone(110.0, WINDOW + 1 * HOP))
+    assert(t.pitch().is_none(), "two readings are not enough")
+
+    t.feed(tone(110.0, HOP, WINDOW + HOP))
+    assert(t.pitch().is_some(), "three are")
+
+@test
+a_tone_that_stops_is_held_and_then_cleared()
+    var t = pipeline()
+    t.feed(tone(110.0, seconds(0.5)))
+    t.feed(silence(seconds(0.95)))
+    assert(t.note().map(n -> n.label()) == Some("A2"), "still held 0.95 s after the string stopped")
+
+    // The last window holding any of the tone ends at most one window after it stopped.
+    t.feed(silence(seconds(0.15)))
+    assert(t.pitch().is_none(), "cleared 1.1 s after the string stopped")
+
+@test
+a_new_note_after_the_hold_starts_afresh()
+    var t = pipeline()
+    t.feed(tone(110.0, seconds(0.5)))
+    t.feed(silence(seconds(1.5)))
+    t.feed(tone(146.8324, WINDOW + 4 * HOP))
+
+    assert(heard(t).label() == "D3", "the new string, with nothing of the old one left in the median")
+
+@test
+the_median_takes_the_middle_reading()
+    var s = smoother()
+    for f in [110.0, 109.0, 330.0, 111.0, 55.0] do s.push(f32(f))
+
+    assert(s.value() == Some(f32(110.0)), f"the median is ${s.value()}")
+
+@test
+the_median_keeps_only_the_latest_five()
+    var s = smoother()
+    for f in [500.0, 500.0, 500.0, 110.0, 110.0, 110.0] do s.push(f32(f))
+
+    assert(s.value() == Some(f32(110.0)), "three of the five held are 110")
+
+@test
+the_median_rejects_a_burst_of_another_pitch()
+    // Two hops of 196 Hz in the middle of a steady A: one window hears only the G and those either
+    // side of it hear a mixture, and the shown pitch never moves from A2.
+    var t = pipeline()
+    var at: usize = 0
+
+    for hop in 0..<40
+        val f = if hop == 20 || hop == 21 then 196.0 else 110.0
+        t.feed(tone(f, HOP, at))
+        at += HOP
+
+        if hop >= 4
+            val n = heard(t)
+            assert(n.label() == "A2" && n.cents.abs() < 1.0,
+                   f"after hop $hop the tuner shows ${n.label()} ${n.cents}")
+
+@test
+one_window_is_read_every_hop()
+    var t = pipeline()
+    t.feed(silence(WINDOW - 1))
+    assert(t.windows() == 0, "nothing is read before the window is full")
+
+    t.feed(silence(1 + 10 * HOP))
+    assert(t.windows() == 11, f"read ${t.windows()} windows")
+
+@test
+chunked_delivery_reads_exactly_what_one_chunk_reads()
+    val signal = tone(196.5, seconds(1.0))
+    var whole = pipeline()
+    whole.feed(signal)
+
+    var r = rng(17, 3)
+    var chunked = pipeline()
+    var at: usize = 0
+    var k = 0
+
+    // Every fourth chunk is empty, which is what a frame with nothing new recorded hands over.
+    while at < signal.len
+        val n = if k % 4 == 0 then 0 else usize(r.below(3000))
+        val stop = if at + n > signal.len then signal.len else at + n
+
+        chunked.feed(signal[at..<stop])
+        at = stop
+        k += 1
+
+    assert(chunked.windows() == whole.windows(), "the same windows were read")
+    assert(chunked.pitch() == whole.pitch(), f"${chunked.pitch()} against ${whole.pitch()}")

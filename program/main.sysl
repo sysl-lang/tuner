@@ -1,112 +1,199 @@
-// Your application. This file is the one you rewrite; everything else in the repository is Skitter's
-// machinery, and the two names your project needs are in `gradle.properties`.
+// A chromatic tuner: the note nearest what the microphone hears, and how far off it is.
 //
-// **What it draws is the point of it**: the window in one colour, the part of the window the system
-// bars leave in another, and a square bouncing inside that. Run it on a phone and the darker border
-// along the top and bottom is the status bar and the navigation bar — the region a program laying
-// itself out against the window's own size would have drawn into and made unreadable.
+// **The listening is `tuner.Pipeline`'s, and this file only moves samples and draws.** Every frame
+// drains what the microphone has recorded into the pipeline, and the screen is rebuilt from what the
+// pipeline answers. The same file is the Android program — `SDL_main`, which `SDLActivity` looks up
+// in `libmain.so` — and the desktop one, whose top level below is the entry point `sysl build-c`
+// leaves out of the archive.
 //
-// **There is one function, and its name is the only unusual thing here.** Android has no `main`:
-// `SDLActivity` loads `libmain.so` and looks up the symbol `SDL_main` in it, so what an Android
-// program needs is not an entry point that runs first but one the Java half can find — and `@export`
-// publishes exactly that. That is also why there is no C in this repository: every other SDL project
-// carries a shim defining `SDL_main` in C, and sysl defines the symbol directly.
+// **`TUNER_TONE=110.5` replaces the microphone with a synthesized tone at that frequency**, so the
+// program can be looked at on a machine where nobody is there to answer a permission prompt.
 
-import sh.sysl.sdl3.*
-import sh.sysl.sdl3.{INIT_VIDEO, SCANCODE_ESCAPE}
-import sh.sysl.skitter.{orient, window_flags, safe_area}
-import sysl.math.min
+import sh.sysl.ui.*
+import sh.sysl.ui_sdl.{app, run}
+import sh.sysl.sdl3.{AudioStream, init_audio, open_recording_stream, error}
+import sh.sysl.pitch.Note
+import sysl.env
+import sysl.math.{Float, max, min}
+import sysl.text.{Search, parse_real}
+import tuner.{Pipeline, RATE, pipeline}
 
-// **What the window is asked for, and not what it gets.** Android answers a size request with the
-// screen, so these matter only on a desktop, where this same file runs unchanged under `sysl run`.
-const WANTED_W: i32 = 400
-const WANTED_H: i32 = 800
+// What the window is asked for: taller than wide, so a phone starts upright.
+const WANTED_W: int = 400
+const WANTED_H: int = 800
 
-// Pixels per second, and the square's side. A speed in seconds rather than in frames is what makes
-// the motion the same on a 60 Hz phone and a 120 Hz one.
-const SPEED: f32 = 260.0
-const SIDE: f32 = 72.0
+// How wide the meter is drawn, in the toolkit's points.
+const METER_W: int = 320
 
-sdl_main_body() -> i32
-    // **Before `init`, because a hint is read when the thing it configures is created** — and on
-    // Android the activity's orientation is settled during startup.
-    orient()
+// Frames drawn before the microphone is opened. On Android the open shows the permission prompt and
+// waits for the answer, so the tuner's own screen is up behind it first.
+const SETTLE: int = 3
 
-    if !init(INIT_VIDEO)
-        return 1
+// Where the samples come from.
+enum Source
+    // Not opened yet: the first few frames.
+    Waiting
 
-    // `window_flags()` folds in `WINDOW_RESIZABLE`, which is the other half of `orient` above: SDL
-    // only lets the device decide the orientation when the window is resizable, and without it a
-    // request taller than it is wide silently locks the app upright.
-    val window = create_window("skitter", WANTED_W, WANTED_H, window_flags()).expect("a window")
-    val renderer = window.create_renderer().expect("a renderer")
+    Microphone(stream: &AudioStream)
 
-    renderer.set_vsync(true)
+    // A tone synthesized at this frequency, and the sample the next chunk starts at.
+    Tone(frequency: real, at: usize)
 
-    var x = 40.0f32
-    var y = 40.0f32
-    var dx = SPEED
-    var dy = SPEED
-    var last = ticks()
-    var running = true
+    // The microphone would not open, and SDL's reason.
+    Refused(why: string)
+end Source
 
-    while running
-        loop
-            poll_event() match
-                Some(e) ->
-                    if e.kind() == EventKind.Quit then running = false
-                    elif e.kind() == EventKind.KeyDown && e.key_scancode() == SCANCODE_ESCAPE
-                        running = false
-                None -> break
+// What the screen reads. Signals, so that writing one rebuilds the tree.
+struct Model
+    frequency: &Signal[real]       // the pitch heard, 0.0 for none
+    status: &Signal[string]
+    a4: &Signal[int]
 
-        // **Clamped, so that an app sent to the background does not come back with the square
-        // through a wall.** The elapsed time across a pause is however long somebody was reading
-        // their messages, and a single step that long moves further than the box is wide.
-        val now = ticks()
-        val dt = min(f32(now - last) / 1000.0, 0.05f32)
+// What only the frame loop touches.
+struct Listener
+    source: Source
+    pipeline: Pipeline
+    scratch: []f32
+    frames: int
 
-        last = now
+// The synthesized tone, when the environment asks for one.
+private wanted_tone() -> Option[real]
+    val s = env.get("TUNER_TONE")?
 
-        // **Asked every frame rather than once.** Both the drawable size and the bars change when the
-        // phone is turned, and a rectangle read at startup describes an orientation the program may
-        // no longer be in.
-        val safe = safe_area(renderer)
+    parse_real(s).ok()
+end wanted_tone
 
-        x += dx * dt
-        y += dy * dt
+// The first frames wait; then the microphone is opened, or the tone started.
+private open(l: &Listener, m: &Model)
+    wanted_tone() match
+        Some(f) ->
+            l.source = Tone(f, 0)
+            m.status.set(s"a test tone at $f Hz")
+        None ->
+            val opened = if init_audio() then open_recording_stream(RATE) else None
 
-        // **Turned around at the safe area's edges, not the window's** — which is the whole of what
-        // Skitter is for. On a phone the square visibly stops short of the top and bottom.
-        if x < safe.x
-            x = safe.x
-            dx = -dx
+            opened match
+                Some(stream) ->
+                    l.source = Microphone(stream)
+                    m.status.set("listening")
+                None -> refuse(l, m, error())
+end open
 
-        if y < safe.y
-            y = safe.y
-            dy = -dy
+private refuse(l: &Listener, m: &Model, why: string)
+    l.source = Refused(why)
 
-        if x + SIDE > safe.x + safe.w
-            x = safe.x + safe.w - SIDE
-            dx = -dx
+    val permission = why.contains("permission")
 
-        if y + SIDE > safe.y + safe.h
-            y = safe.y + safe.h - SIDE
-            dy = -dy
+    m.status.set(if permission then "no microphone permission" else s"no microphone: $why")
+end refuse
 
-        // The window, then the region the bars leave, then the square inside it.
-        renderer.clear_to(rgb(10, 11, 15))
+// Everything recorded since the last frame, into the pipeline.
+private drain(l: &Listener, stream: &AudioStream)
+    loop
+        stream.read(l.scratch) match
+            Some(n) if n > 0 -> l.pipeline.feed(l.scratch[0..<n])
+            _ -> break
+end drain
 
-        renderer.set_draw_color(rgb(28, 31, 42))
-        renderer.fill_rect(safe.x, safe.y, safe.w, safe.h)
+// `dt` seconds of the test tone: three harmonics, as a string has.
+private synthesize(l: &Listener, f: real, from: usize, dt: real) -> usize
+    val n = usize(dt * real(RATE))
+    val step = 2.0 * real.pi() * f / real(RATE)
+    var chunk: []f32 = [0.0; n]
 
-        renderer.set_draw_color(rgb(120, 170, 255))
-        renderer.fill_rect(x, y, SIDE, SIDE)
+    for j in 0..<n
+        val t = step * real(from + j)
+        chunk[j] = f32(0.3 * t.sin() + 0.15 * (2.0 * t).sin() + 0.08 * (3.0 * t).sin())
 
-        renderer.present()
+    l.pipeline.feed(chunk)
+    from + n
+end synthesize
 
-    quit()
+// Once a frame, on the loop's thread.
+private listen(l: &Listener, m: &Model, dt: real)
+    l.frames += 1
+
+    l.source match
+        Waiting -> if l.frames >= SETTLE then open(l, m)
+        Microphone(stream) -> drain(l, stream)
+        Tone(f, at) -> l.source = Tone(f, synthesize(l, f, at, dt))
+        Refused(_) -> return
+
+    val heard = l.pipeline.pitch().unwrap_or(0.0)
+
+    if heard != m.frequency.read() then m.frequency.set(heard)
+end listen
+
+private signed(cents: real) -> string
+    val r = int(cents.round())
+
+    if r > 0 then s"+$r" else s"$r"
+end signed
+
+// One decimal place.
+private tenths(x: real) -> string
+    val t = int((x * 10.0).round())
+
+    s"${t / 10}.${t % 10}"
+end tenths
+
+private centred(v: &View) -> &View = row([spacer(), v, spacer()])
+
+private reading(n: Note[real], f: real) -> &View
+    val name = row([text(n.name()).font_size(150.0), text(s"${n.octave()}").text_style(TextStyle.Title)], 4)
+
+    column(spacing = 18):
+        centred(name)
+        centred(meter(n.cents, -50.0, 50.0, METER_W, 5.0))
+        centred(text(s"${signed(n.cents)} cents · ${tenths(f)} Hz").text_style(TextStyle.Caption))
+end reading
+
+private quiet() -> &View
+    column(spacing = 18):
+        centred(text("–").font_size(150.0).foreground(0x5A5F6E))
+        // No band: with nothing heard, nothing is in tune.
+        centred(meter(0.0, -50.0, 50.0, METER_W, role = Role.Secondary))
+        centred(text(" ").text_style(TextStyle.Caption))
+end quiet
+
+private step_a4(m: &Model, by: int) -> &Fn() -> unit =
+    () -> m.a4.set(max(430, min(450, m.a4.read() + by)))
+
+// The whole screen, rebuilt whenever a signal is written.
+screen(m: &Model) -> &View
+    val f = m.frequency.read()
+    val shown = if f > 0.0 then note_of_reading(f, real(m.a4.read())) else None
+
+    val status = shown match
+        Some(_) -> m.status.read()
+        None -> if m.status.read() == "listening" then "play a string" else m.status.read()
+
+    val body = column(spacing = 28):
+        centred(text("Tuner").text_style(TextStyle.Title))
+        spacer()
+        shown match
+            Some(n) -> reading(n, f)
+            None -> quiet()
+        centred(text(status))
+        spacer()
+        centred(row([button("−", step_a4(m, -1), Role.Secondary),
+                     text(s"A4 = ${m.a4.read()} Hz").padding(6),
+                     button("+", step_a4(m, 1), Role.Secondary)], 10))
+
+    body.padding(20).restyle(_ -> dark())
+end screen
+
+private note_of_reading(f: real, a4: real) -> Option[Note[real]] = sh.sysl.pitch.note_of(f, a4)
+
+start() -> i32
+    val m: &Model = Model(signal(0.0), signal("starting"), signal(440))
+    val l: &Listener = Listener(Waiting, pipeline(), [0.0; 4096], 0)
+
+    run(app("Tuner", () -> screen(m), () -> 0x12141C, WANTED_W, WANTED_H, on_frame = dt -> listen(l, m, dt)))
     0
-end sdl_main_body
+end start
 
 @export("SDL_main")
-sdl_main(argc: i32, argv: **u8) -> i32 = sdl_main_body()
+sdl_main(argc: i32, argv: **u8) -> i32 = start()
+
+start()
