@@ -12,8 +12,8 @@ The same program runs on a Mac, where a synthesized tone can stand in for the mi
 | coordinate | version | what it does here |
 |---|---|---|
 | `skitter` | 0.1.0 | the Android activity, the Gradle build, the system bars |
-| `syslui` | 0.1.4 | the interface — `meter`, `.font_size` for the note name, and `slider` for the Detection settings |
-| `syslui-sdl` | 0.2.1 | the window and frame loop; `on_frame` is where the microphone is drained |
+| `syslui` | 0.1.6 | the interface — `meter`, `.font_size` for the note name, `slider` for the Detection settings and `scroll` for the section they sit in |
+| `syslui-sdl` | 0.2.2 | the window and frame loop; `on_frame` is where the microphone is drained, and a tap lands when the finger lifts |
 | `sdl3` | 0.3.2 | `open_recording_stream`, which also asks for the permission |
 | `pitch` | 0.1.2 | YIN pitch detection, the high-pass filter ahead of it, subharmonic correction, and the note arithmetic |
 
@@ -65,7 +65,12 @@ one: on a linear slider the default would sit six points from the left end. In d
 the same 12% change in level, and it reads on the same scale as the **Input** meter beneath it, whose
 major tick marks the gate — so the gate can be set a few decibels above what the room reads with
 nothing playing. Under the meter is the last window's own reading, before the median and the clarity
-cut, marked *dropped* when the cut left it out. **Reset to defaults** puts every slider back.
+cut, marked *dropped* when the cut left it out. **Reset to defaults** puts every slider back, and the
+last line names the tuner's version — `__VERSION__`, the `version` in `program/package.hocon`, which
+is also where the Android build reads its `versionName` from.
+
+The section scrolls, in the room under its header: drag it by a setting's name, or with the wheel or
+trackpad on a Mac. A drag that starts on a slider moves the slider.
 
 **The settings are not saved**: every launch starts from the defaults. `TUNER_DETECTION=open` starts the
 desktop program with the section open.
@@ -73,7 +78,7 @@ desktop program with the section open.
 ## Building and running on Android
 
 You need the Android SDK (with `ANDROID_HOME` set, or `~/Library/Android/sdk`), a JDK from 17 to 25,
-and sysl 0.0.158 or later.
+and sysl 0.0.160 or later.
 
 ```
 ./fetch-sdl3.sh
@@ -124,6 +129,10 @@ Every detection setting has a test that changes it partway through a stream and 
 reading differently — a tolerance of zero brings back the A string's period under a ringing high E, a
 median of one shows the burst five outvote, a hold of zero clears at the first silent window — and a
 new filter never puts a steady tone's reading off for more than one hop.
+
+`program/tuner/screen_tests.sysl` paints the screen into a recorder and presses it: the header opens
+and closes the section, the A4 buttons step, a drag over the settings scrolls them, Reset scrolled to
+puts them back, and the caption reads `tuner ` and the version `package.hocon` declares.
 
 **`program/tuner/lowE.s16` is a real low E**: the user's own guitar, an unplugged electric, played
 into a MacBook's built-in microphone — 9.5 s of 48 kHz mono, signed 16-bit little-endian, no header.

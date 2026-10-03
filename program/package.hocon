@@ -5,20 +5,20 @@
 // directory up.
 package {
   name    = "tuner"
-  version = "0.1.4"
+  version = "0.1.5"
 
   // The release every coordinate below was built against.
-  sysl = "0.0.158"
+  sysl = "0.0.160"
 }
 
 // **syslUI is named directly even though syslui-sdl brings it**: the driver asks for an older one,
-// and resolution takes the highest minimum anybody states, so this line is what makes the large text
-// and the meter reachable. sdl3 is named for the same reason — the recording stream is newer than
+// and resolution takes the highest minimum anybody states, so this line is what makes the newest
+// syslUI reachable. sdl3 is named for the same reason — the recording stream is newer than
 // the one Skitter asks for.
 dependencies {
   skitter    { git = "github.com/sysl-lang/skitter",    version = "0.1.0" }
-  syslui     { git = "github.com/sysl-lang/syslui",     version = "0.1.4" }
-  syslui-sdl { git = "github.com/sysl-lang/syslui-sdl", version = "0.2.1" }
+  syslui     { git = "github.com/sysl-lang/syslui",     version = "0.1.6" }
+  syslui-sdl { git = "github.com/sysl-lang/syslui-sdl", version = "0.2.2" }
   sdl3       { git = "github.com/sysl-lang/sdl3",       version = "0.3.2" }
   pitch      { git = "github.com/sysl-lang/pitch",      version = "0.1.2" }
 }

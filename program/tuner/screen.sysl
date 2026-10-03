@@ -1,0 +1,160 @@
+module tuner
+
+import sh.sysl.ui.*
+import sh.sysl.pitch.{Note, cents_from, frequency_of}
+import sysl.math.{Float, max, min}
+
+// What the tuner draws, from the signals the frame loop writes. A module of its own rather than part
+// of the program's entry file so that the suite can paint it into a recorder and press its buttons.
+
+// How wide the meter is drawn, in the toolkit's points.
+const METER_W: int = 320
+
+// A setting's row: its name, its slider and its value, which together fill the 360 points inside the
+// screen's padding. The name and the value are given widths of their own so that a value changing
+// length never moves the slider under a finger.
+const NAME_W: int = 100
+const SLIDER_W: int = 172
+const VALUE_W: int = 64
+const ROW_H: int = 22
+
+/** How tall the open Detection section's window is: the room left under the header on an 800-point
+ * screen once the note, the meter and the A4 buttons have theirs. The settings scroll inside it, so
+ * every row keeps a finger's spacing however short the screen is.
+ */
+const PANEL_H: int = 230
+
+/** What the screen reads. Signals, so that writing one rebuilds the tree. */
+struct Model
+    frequency: &Signal[real]       // the pitch heard, 0.0 for none
+    midi: &Signal[int]             // the note on show, which is not always the nearest one
+    status: &Signal[string]
+    a4: &Signal[int]
+
+    // The Detection section: whether it is open, how far it is scrolled, what its sliders hold, and
+    // what it reports — the last window's level in dBFS and its reading before the median.
+    open: &Signal[bool]
+    scrolled: &Signal[int]
+    controls: Controls
+    level: &Signal[int]
+    raw: &Signal[string]
+
+/** A model with nothing heard yet, the shipped settings, and the Detection section `open` or not. */
+model(open: bool) -> &Model =
+    Model(signal(0.0), signal(0), signal("starting"), signal(440), signal(open), signal(0), controls(),
+          signal(-120), signal("last window: none yet"))
+
+/** Which tuner this is, as the Detection section shows it. */
+version_caption() -> string = "tuner " + __VERSION__
+
+private signed(cents: real) -> string
+    val r = int(cents.round())
+
+    if r > 0 then s"+$r" else s"$r"
+end signed
+
+/** One decimal place. */
+tenths(x: real) -> string
+    val t = int((x * 10.0).round())
+
+    s"${t / 10}.${t % 10}"
+end tenths
+
+/** Two decimal places, of a value that is not negative. */
+hundredths(x: real) -> string
+    val h = int((x * 100.0).round())
+    val pad = if h % 100 < 10 then "0" else ""
+
+    s"${h / 100}.$pad${h % 100}"
+end hundredths
+
+private centred(v: &View) -> &View = row([spacer(), v, spacer()])
+
+private reading(n: Note[real], f: real) -> &View
+    val name = row([text(n.name()).font_size(150.0), text(s"${n.octave()}").text_style(TextStyle.Title)], 4)
+
+    column(spacing = 18):
+        centred(name)
+        centred(meter(n.cents, -50.0, 50.0, METER_W, 5.0))
+        centred(text(s"${signed(n.cents)} cents · ${tenths(f)} Hz").text_style(TextStyle.Caption))
+end reading
+
+private quiet() -> &View
+    column(spacing = 18):
+        centred(text("–").font_size(150.0).foreground(0x5A5F6E))
+        // No band: with nothing heard, nothing is in tune.
+        centred(meter(0.0, -50.0, 50.0, METER_W, role = Role.Secondary))
+        centred(text(" ").text_style(TextStyle.Caption))
+end quiet
+
+private step_a4(m: &Model, by: int) -> &Fn() -> unit =
+    () -> m.a4.set(max(430, min(450, m.a4.read() + by)))
+
+// One setting: its name, the control, and what it is set to.
+private setting(name: string, control: &View, value: string) -> &View
+    row([text(name).text_style(TextStyle.Caption).frame(NAME_W, ROW_H), control,
+         text(value).text_style(TextStyle.Caption).frame(VALUE_W, ROW_H)], 12)
+
+// The detection's settings, what the last window heard, the way back to the defaults, and which
+// tuner this is.
+private detection(m: &Model) -> &View
+    val c = m.controls
+    val gate = c.gate.read()
+
+    column(spacing = 14):
+        setting("High-pass", slider(c.cutoff, 20.0, 150.0, SLIDER_W, step = 5.0),
+                s"${int(c.cutoff.read().round())} Hz")
+        setting("YIN threshold", slider(c.threshold, 0.05, 0.5, SLIDER_W, step = 0.01),
+                hundredths(c.threshold.read()))
+        setting("Min clarity", slider(c.clarity, 0.5, 0.99, SLIDER_W, step = 0.01), hundredths(c.clarity.read()))
+        setting("Subharmonic", slider(c.tolerance, 0.0, 0.4, SLIDER_W, step = 0.01),
+                if c.tolerance.read() > 0.0 then hundredths(c.tolerance.read()) else "off")
+        setting("Smoothing", slider(c.median, 1, 9, SLIDER_W, step = 2), s"${c.median.read()} reads")
+        setting("Hold", slider(c.hold, 0.0, 3.0, SLIDER_W, step = 0.1), s"${tenths(c.hold.read())} s")
+        setting("Silence gate", slider(c.gate, GATE_LEAST_DB, GATE_MOST_DB, SLIDER_W, step = 1.0),
+                s"${int(gate.round())} dB")
+        // The gate is the meter's target mark, so the room's level and the gate read on one scale.
+        setting("Input", meter(real(m.level.read()), -80.0, 0.0, SLIDER_W, target = gate, role = Role.Secondary),
+                s"${m.level.read()} dB")
+        centred(text(m.raw.read()).text_style(TextStyle.Caption))
+        centred(button("Reset to defaults", () -> m.controls.reset(), Role.Secondary))
+        centred(text(version_caption()).text_style(TextStyle.Caption).foreground(0x5A5F6E))
+end detection
+
+// The section's header, which opens and closes it.
+private toggle(m: &Model) -> &View
+    // A plus and a minus rather than triangles: Roboto, which Android draws with, has none of the
+    // triangles (U+25B8, U+25BE, U+25BA, U+25BC), and these two the A4 buttons already show.
+    val open = m.open.read()
+
+    centred(button(if open then "Detection −" else "Detection +", () -> m.open.set(!open), Role.Secondary))
+end toggle
+
+/** The whole screen, rebuilt whenever a signal is written. */
+screen(m: &Model) -> &View
+    val f = m.frequency.read()
+    val shown = if f > 0.0 then Some(shown_note(m.midi.read(), f, real(m.a4.read()))) else None
+
+    val status = shown match
+        Some(_) -> m.status.read()
+        None -> if m.status.read() == "listening" then "play a string" else m.status.read()
+
+    val body = column(spacing = 28):
+        centred(text("Tuner").text_style(TextStyle.Title))
+        spacer()
+        shown match
+            Some(n) -> reading(n, f)
+            None -> quiet()
+        centred(text(status))
+        if m.open.read() then column([toggle(m), scroll(detection(m), m.scrolled, PANEL_H)], 8) else toggle(m)
+        spacer()
+        centred(row([button("−", step_a4(m, -1), Role.Secondary),
+                     text(s"A4 = ${m.a4.read()} Hz").padding(6),
+                     button("+", step_a4(m, 1), Role.Secondary)], 10))
+
+    body.padding(20).restyle(_ -> dark())
+end screen
+
+// The note the pipeline is showing, with the cents measured from it rather than from whichever note
+// happens to be nearest.
+private shown_note(midi: int, f: real, a4: real) -> Note[real] = Note(midi, cents_from(f, frequency_of(midi, a4)))

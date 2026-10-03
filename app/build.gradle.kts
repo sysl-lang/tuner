@@ -16,6 +16,14 @@ val appNameProp = providers.gradleProperty("skitter.appName").get()
 // written before this existed must still configure. `orElse("")` gives both.
 val sdlLibrariesProp = providers.gradleProperty("skitter.sdlLibraries").orElse("").get().trim()
 
+// **The version a person sees, read from `program/package.hocon`** — the line `__VERSION__` reads, so
+// the screen and the system's app info cannot disagree. Only the package's own `version` starts a
+// line; a dependency's sits inside its braces, after the name.
+val programVersion = Regex("""^\s*version\s*=\s*"([^"]+)"""", RegexOption.MULTILINE)
+    .find(rootProject.file("program/package.hocon").readText())
+    ?.groupValues?.get(1)
+    ?: error("program/package.hocon declares no version")
+
 // **The permissions, by the name a person would say rather than the one Android spells.** Each
 // friendly name stands for every `<uses-permission>` it takes on every Android this app installs on,
 // which is why it is a table rather than a string substitution: `bluetooth` is two lines, because the
@@ -108,9 +116,10 @@ android {
         targetSdk = 36
 
         // Yours to bump when you ship. `versionCode` is what Android compares between installs and
-        // must only ever go up; `versionName` is shown to a person and can say anything.
-        versionCode = 5
-        versionName = "0.1.4"
+        // must only ever go up; `versionName` is shown to a person, and is the program's own
+        // `version` — read from its manifest, so the number lives in one place.
+        versionCode = 6
+        versionName = programVersion
 
         externalNativeBuild {
             cmake {

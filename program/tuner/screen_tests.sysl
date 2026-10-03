@@ -1,0 +1,151 @@
+module tuner
+@tests
+
+import sh.sysl.ui.{Rect, Recorder, View, recorder, render}
+import sysl.fs.read_text
+import sysl.path.{join, parent}
+import sysl.text.{Search, parse_int, split}
+
+// What the screen claims, painted into a recorder the size of the window the tuner asks for, and
+// pressed where its own recording says each control was drawn.
+
+private window() -> Rect = Rect(0, 0, 400, 800)
+
+// The middle of the first text drawn as exactly `label`, in a fresh painting of `tree` — which leaves
+// out whatever a scroll has outside its window.
+private drawn(tree: &View, label: string) -> Option[(int, int)]
+    var c = recorder()
+
+    render(tree, &c, window())
+
+    for line in split(c.dump(), "\n")
+        if line.starts_with("text ") && line.contains(s"'$label'")
+            val words = split(line, " ")
+            val at = split(words[1], ",")
+            val size = split(words[2], "x")
+            val x = parse_int(at[0]).expect("x")
+            val y = parse_int(at[1]).expect("y")
+
+            return Some((x + parse_int(size[0]).expect("w") / 2, y + parse_int(size[1]).expect("h") / 2))
+
+    None
+end drawn
+
+private centre_of(tree: &View, label: string) -> (int, int) = drawn(tree, label).expect(s"'$label' is drawn")
+
+// Scroll the Detection section down a row at a time until `label` is drawn, then two rows more so
+// that all of it is inside the window, and say how far that was.
+private scroll_to(m: &Model, label: string) -> int
+    for _ in 0..<40
+        if drawn(screen(m), label).is_some()
+            m.scrolled.set(m.scrolled.read() + 40)
+
+            return m.scrolled.read()
+
+        m.scrolled.set(m.scrolled.read() + 20)
+
+    assert(false, s"'$label' is drawn once the section is scrolled")
+    -1
+end scroll_to
+
+// A finger put down on `label` and lifted where it went down.
+private tap(m: &Model, label: string)
+    val (x, y) = centre_of(screen(m), label)
+    var c = recorder()
+
+    c.point(x, y, true)
+    render(screen(m), &c, window())
+    c.release(x, y)
+end tap
+
+// The version the manifest beside the program declares — the first `version` in it, the package's.
+private manifest_version() -> string
+    val dir = parent(parent(__FILE__).expect("this file is in a directory")).expect("tuner is in the program")
+    val manifest = read_text(join(dir, "package.hocon")).expect("the program has a manifest")
+
+    split(split(manifest, "version = \"")[1], "\"")[0]
+end manifest_version
+
+@test("the Detection section names the tuner's version, which is the manifest's")
+the_caption_is_the_manifests_version()
+    val want = "tuner " + manifest_version()
+    val m = model(true)
+
+    scroll_to(m, want)
+    assert_eq(version_caption(), want)
+end the_caption_is_the_manifests_version
+
+@test("the caption is only on the open section, so the closed screen is what it was")
+the_closed_screen_has_no_caption()
+    var c = recorder()
+
+    render(screen(model(false)), &c, window())
+
+    assert(!c.dump().contains(version_caption()), "no caption while closed")
+end the_closed_screen_has_no_caption
+
+// The section is taller than the room under its header, so a finger dragged up over a setting's name
+// scrolls it, and lifting the finger presses nothing.
+@test("a drag over the Detection settings scrolls them")
+a_drag_scrolls_the_settings()
+    val m = model(true)
+    val (_, y) = centre_of(screen(m), "High-pass")
+    var c = recorder()
+
+    c.point(30, y, true)
+    render(screen(m), &c, window())
+    c.point(30, y - 40, true)
+    render(screen(m), &c, window())
+    c.release(30, y - 40)
+
+    assert_eq(m.scrolled.read(), 40)
+    assert(m.open.read(), "still open")
+end a_drag_scrolls_the_settings
+
+// The last row is below the section's window until it is scrolled to, which is what the scroll is for.
+@test("the settings are taller than their window")
+the_settings_overflow_their_window()
+    val m = model(true)
+
+    assert(drawn(screen(m), version_caption()).is_none(), "the caption starts below the window")
+    assert(scroll_to(m, version_caption()) > 0, "and is reached by scrolling")
+end the_settings_overflow_their_window
+
+// A tap is decided when the finger lifts, so each control is pressed and released.
+@test("the Detection header opens and closes the section")
+the_header_toggles()
+    val m = model(false)
+
+    tap(m, "Detection +")
+    assert(m.open.read(), "opened")
+
+    tap(m, "Detection −")
+    assert(!m.open.read(), "closed")
+end the_header_toggles
+
+@test("the A4 buttons move the reference a hertz at a time")
+the_a4_buttons_step()
+    val m = model(false)
+
+    tap(m, "+")
+    assert_eq(m.a4.read(), 441)
+
+    tap(m, "−")
+    tap(m, "−")
+    assert_eq(m.a4.read(), 439)
+end the_a4_buttons_step
+
+// Reset sits below the window until the section is scrolled to it.
+@test("Reset to defaults, scrolled to, puts the settings back")
+reset_restores_the_settings()
+    val m = model(true)
+
+    m.controls.threshold.set(0.4)
+    m.controls.median.set(9)
+
+    scroll_to(m, "Reset to defaults")
+    tap(m, "Reset to defaults")
+
+    assert_eq(m.controls.threshold.read(), real(settings().threshold))
+    assert_eq(m.controls.median.read(), int(settings().median))
+end reset_restores_the_settings
