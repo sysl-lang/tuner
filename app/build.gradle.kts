@@ -109,8 +109,8 @@ android {
 
         // Yours to bump when you ship. `versionCode` is what Android compares between installs and
         // must only ever go up; `versionName` is shown to a person and can say anything.
-        versionCode = 2
-        versionName = "0.1.1"
+        versionCode = 3
+        versionName = "0.1.2"
 
         externalNativeBuild {
             cmake {

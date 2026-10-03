@@ -12,7 +12,7 @@
 import sh.sysl.ui.*
 import sh.sysl.ui_sdl.{app, run}
 import sh.sysl.sdl3.{AudioStream, init_audio, open_recording_stream, error}
-import sh.sysl.pitch.Note
+import sh.sysl.pitch.{Note, cents_from, frequency_of}
 import sysl.env
 import sysl.math.{Float, max, min}
 import sysl.text.{Search, parse_real}
@@ -46,6 +46,7 @@ end Source
 // What the screen reads. Signals, so that writing one rebuilds the tree.
 struct Model
     frequency: &Signal[real]       // the pitch heard, 0.0 for none
+    midi: &Signal[int]             // the note on show, which is not always the nearest one
     status: &Signal[string]
     a4: &Signal[int]
 
@@ -119,7 +120,12 @@ private listen(l: &Listener, m: &Model, dt: real)
         Tone(f, at) -> l.source = Tone(f, synthesize(l, f, at, dt))
         Refused(_) -> return
 
+    l.pipeline.tune(real(m.a4.read()))
+
     val heard = l.pipeline.pitch().unwrap_or(0.0)
+    val midi = l.pipeline.note().map(n -> n.midi).unwrap_or(0)
+
+    if midi != m.midi.read() then m.midi.set(midi)
 
     if heard != m.frequency.read() then m.frequency.set(heard)
 end listen
@@ -162,7 +168,7 @@ private step_a4(m: &Model, by: int) -> &Fn() -> unit =
 // The whole screen, rebuilt whenever a signal is written.
 screen(m: &Model) -> &View
     val f = m.frequency.read()
-    val shown = if f > 0.0 then note_of_reading(f, real(m.a4.read())) else None
+    val shown = if f > 0.0 then Some(shown_note(m.midi.read(), f, real(m.a4.read()))) else None
 
     val status = shown match
         Some(_) -> m.status.read()
@@ -183,10 +189,12 @@ screen(m: &Model) -> &View
     body.padding(20).restyle(_ -> dark())
 end screen
 
-private note_of_reading(f: real, a4: real) -> Option[Note[real]] = sh.sysl.pitch.note_of(f, a4)
+// The note the pipeline is showing, with the cents measured from it rather than from whichever note
+// happens to be nearest.
+private shown_note(midi: int, f: real, a4: real) -> Note[real] = Note(midi, cents_from(f, frequency_of(midi, a4)))
 
 start() -> i32
-    val m: &Model = Model(signal(0.0), signal("starting"), signal(440))
+    val m: &Model = Model(signal(0.0), signal(0), signal("starting"), signal(440))
     val l: &Listener = Listener(Waiting, pipeline(), [0.0; 4096], 0)
 
     run(app("Tuner", () -> screen(m), () -> 0x12141C, WANTED_W, WANTED_H, on_frame = dt -> listen(l, m, dt)))

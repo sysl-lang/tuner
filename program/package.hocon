@@ -5,7 +5,7 @@
 // directory up.
 package {
   name    = "tuner"
-  version = "0.1.1"
+  version = "0.1.2"
 
   // The release every coordinate below was built against.
   sysl = "0.0.158"
@@ -20,7 +20,7 @@ dependencies {
   syslui     { git = "github.com/sysl-lang/syslui",     version = "0.1.3" }
   syslui-sdl { git = "github.com/sysl-lang/syslui-sdl", version = "0.2.1" }
   sdl3       { git = "github.com/sysl-lang/sdl3",       version = "0.3.2" }
-  pitch      { git = "github.com/sysl-lang/pitch",      version = "0.1.0" }
+  pitch      { git = "github.com/sysl-lang/pitch",      version = "0.1.1" }
 }
 
 // What SDL3 requires, restated because a program reaching a gated module has to say so too. Android

@@ -1,8 +1,10 @@
 module tuner
 @tests
 
-import sh.sysl.pitch.{Note, cents_from}
-import sysl.math.Float
+import sh.sysl.pitch.{Note, cents_from, rms}
+import sysl.fs.read_bytes
+import sysl.math.{Float, max, min}
+import sysl.path.{join, parent}
 import sysl.rand.rng
 
 // What the pipeline claims, run by `sysl test program`.
@@ -35,6 +37,180 @@ private seconds(s: real) -> usize = usize(s * rate)
 
 private heard(t: Pipeline) -> Note[real] = t.note().expect("a note")
 
+// The low E of the user's own guitar — an unplugged electric through a MacBook's microphone — as
+// 48 kHz mono signed 16-bit little-endian samples, read from beside this file wherever the suite is
+// run from.
+private recording() -> []f32
+    val dir = parent(__FILE__).expect("this file is in a directory")
+    val bytes = read_bytes(join(dir, "lowE.s16")).expect("the fixture is beside the tests")
+    var out: []f32 = [0.0; bytes.len / 2]
+
+    for i in 0..<out.len
+        val v = int(bytes[2 * i]) | int(bytes[2 * i + 1]) << 8
+
+        out[i] = f32(real(if v >= 32768 then v - 65536 else v) / 32768.0)
+
+    out
+end recording
+
+// What a tuner showed over a recording fed to it in chunks of 480 samples — ten milliseconds, a
+// typical device buffer — counted chunk by chunk over the chunks where the string is sounding.
+private struct Showing
+    sounding: usize
+    e2: usize
+    wrong: usize          // a note shown that is not E2
+    least: real           // the extremes of the cents shown with E2
+    most: real
+
+private watch(t: *Pipeline, samples: []const f32) -> Showing
+    var s = Showing(0, 0, 0, 1000.0, -1000.0)
+    var from: usize = 0
+
+    while from < samples.len
+        val to = min(from + 480, samples.len)
+        val chunk = samples[from..<to]
+
+        t.feed(chunk)
+        from = to
+
+        if rms(chunk) >= LOUD
+            s.sounding += 1
+
+            t.note() match
+                Some(n) if n.midi == 40 ->
+                    s.e2 += 1
+                    s.least = min(s.least, n.cents)
+                    s.most = max(s.most, n.cents)
+                Some(_) -> s.wrong += 1
+                None -> ()
+
+    s
+end watch
+
+// Loud enough to be the string rather than the room: about 38 dB below full scale.
+private const LOUD: f32 = 0.012
+
+@test
+a_real_low_e_reads_as_e2_for_most_of_the_time_it_sounds()
+    // Measured: 251 of the 342 sounding chunks show E2 (73%), every one of them between -16.9 and
+    // -1.5 cents. The chunks that show nothing are the pluck's first frames, before three readings
+    // agree, and the tail where the string has died into the room. Without the filter it is 230,
+    // and with the old clarity of 0.9 it is 107, so the floor tells each setting's absence apart.
+    var t = pipeline()
+    val s = watch(&t, recording())
+
+    assert(s.sounding > 300, f"the string sounds for ${s.sounding} chunks")
+    assert(real(s.e2) >= 0.70 * real(s.sounding), f"E2 for ${s.e2} of ${s.sounding} chunks")
+    assert(s.wrong == 0, f"another note for ${s.wrong} chunks — D#2, E3, or anything else")
+    assert(s.most - s.least < 20.0, f"the cents wandered from ${s.least} to ${s.most}")
+
+@test
+the_old_settings_read_nothing_from_the_same_recording()
+    // The YIN paper's threshold, a clarity of 0.9 and no filter, which a clean tone satisfies and
+    // this recording does not.
+    var t = pipeline(0.12, 0.9, false)
+    val s = watch(&t, recording())
+
+    assert(s.e2 + s.wrong < s.sounding / 20, f"a note shown for ${s.e2 + s.wrong} of ${s.sounding} chunks")
+
+// A tone carried on from one chunk to the next with no jump in phase as its pitch moves, the way a
+// string bent or tuned keeps ringing.
+private struct Voice
+    phase: real
+
+    // One 480-sample chunk at `frequency` into the pipeline.
+    play(*self, t: *Pipeline, frequency: real)
+        var out: []f32 = [0.0; 480]
+        val step = 2.0 * real.pi() * frequency / rate
+
+        for j in 0..<out.len
+            val p = self.phase + step * real(j)
+            out[j] = f32(0.3 * p.sin() + 0.15 * (2.0 * p).sin() + 0.08 * (3.0 * p).sin())
+
+        self.phase += step * real(out.len)
+        t.feed(out)
+    end play
+end Voice
+
+private const E2: real = 82.4069
+
+private cents_above(f: real, c: real) -> real = f * (c / 1200.0).exp2()
+
+// The note on show, as a MIDI number, or -1 for none.
+private midi(t: Pipeline) -> int = t.note().map(n -> n.midi).unwrap_or(-1)
+
+@test
+a_string_fifty_cents_flat_of_e_stays_e()
+    // Fifty cents is exactly between E2 and D#2, so without hysteresis the note would flip with every
+    // waver. The pitch moves to a fresh point within eight cents of -50 every tenth of a second.
+    var t = pipeline()
+    var v = Voice(0.0)
+    var r = rng(5, 11)
+    var jitter = 0.0
+
+    for chunk in 0..<400
+        if chunk % 10 == 0 then jitter = 16.0 * r.unit() - 8.0
+
+        v.play(&t, cents_above(E2, -50.0 + jitter))
+
+        if chunk >= 20
+            val n = heard(t)
+            assert(n.midi == 40, f"chunk $chunk shows ${n.label()} ${n.cents}")
+
+@test
+a_glide_from_e_to_f_switches_once_past_sixty_cents()
+    var t = pipeline()
+    var v = Voice(0.0)
+    var switches = 0
+
+    for chunk in 0..<20 do v.play(&t, E2)
+
+    var was = midi(t)
+    assert(was == 40, "the glide starts on E2")
+
+    // Up a semitone over two seconds, then held on F2.
+    for chunk in 0..<300
+        v.play(&t, cents_above(E2, 100.0 * min(real(chunk) / 200.0, 1.0)))
+
+        val now = midi(t)
+        if now != was
+            switches += 1
+            val at = cents_from(t.pitch().expect("a pitch"), E2)
+            assert(was == 40 && now == 41, f"switched from $was to $now")
+            assert(at > 60.0, f"switched at only $at cents above E2")
+
+        was = now
+
+    assert(switches == 1, f"switched $switches times")
+
+@test
+switching_back_takes_sixty_cents_the_other_way()
+    var t = pipeline()
+    var v = Voice(0.0)
+    val f2 = cents_above(E2, 100.0)
+
+    for chunk in 0..<20 do v.play(&t, f2)
+
+    assert(midi(t) == 41, "it starts on F2")
+
+    // Down to 45 cents above E2 — 55 below F, nearer E — and held there: still F2.
+    for chunk in 0..<200
+        v.play(&t, cents_above(E2, 100.0 - 55.0 * min(real(chunk) / 100.0, 1.0)))
+        assert(midi(t) == 41, f"chunk $chunk shows ${heard(t).label()} ${heard(t).cents}")
+
+    // On down to 30 above E2: E2 comes back once the pitch is more than 60 cents below F.
+    var back = false
+
+    for chunk in 0..<200
+        v.play(&t, cents_above(E2, 45.0 - 15.0 * min(real(chunk) / 100.0, 1.0)))
+
+        if !back && midi(t) == 40
+            back = true
+            val at = cents_from(t.pitch().expect("a pitch"), f2)
+            assert(at < -60.0, f"switched back at only $at cents below F2")
+
+    assert(back, "E2 came back")
+
 @test
 a_steady_tone_at_each_open_string_reads_its_note_within_a_cent()
     for i in 0..<6
@@ -57,10 +233,12 @@ a_tone_ten_cents_sharp_reads_plus_ten()
 @test
 the_reference_pitch_moves_the_cents()
     var t = pipeline()
+    t.tune(442.0)
     t.feed(tone(110.0, seconds(0.5)))
 
     // A2 against A4 = 442 Hz is 110.5 Hz, so a 110 Hz string is flat by 1200 log2(110.5 / 110).
-    val n = t.note(442.0).expect("a note")
+    val n = heard(t)
+    assert(n.label() == "A2", f"reads as ${n.label()}")
     assert((n.cents - cents_from(110.0, 110.5)).abs() < 1.0, f"reads ${n.cents} cents")
 
 @test

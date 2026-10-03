@@ -1,14 +1,16 @@
 module tuner
 
-// From samples to the pitch a tuner shows: a sliding window, a detection every hop, a median over
-// the last few answers, and a hold after the string stops ringing.
+// From samples to the pitch a tuner shows: a high-pass filter, a sliding window, a detection every
+// hop, a median over the last few answers, a note that does not flicker between neighbours, and a
+// hold after the string stops ringing.
 //
 // **Nothing here knows where the samples come from.** The microphone, a synthesized test tone and a
 // unit test all hand over slices of whatever length they happen to have, and every decision below is
 // counted in samples rather than in seconds of wall clock — so the same samples give the same answer
 // however they were chunked, and a test can run a second of audio in a millisecond.
 
-import sh.sysl.pitch.{Detector, Note, detector, note_of}
+import sh.sysl.pitch.{Detector, HighPass, Note, cents_from, detector, frequency_of, highpass, note_of}
+import sysl.math.{Float, min}
 import sysl.slices.sort_by
 
 /** Samples a second, which the microphone is asked for and the detector is built for. */
@@ -38,11 +40,30 @@ const MEDIAN_OF: usize = 5
 /** Readings needed before anything is shown, so that one stray frame of noise never names a note. */
 const AGREE: usize = 3
 
-/** How sure a frame has to be to count — one minus the depth of YIN's dip. The detector's own
- * threshold already demands 0.88; this asks for a little more, which costs a frame or two at the
- * start of a pluck and keeps the frames where the string is being touched out of the median.
+/** Where the high-pass filter ahead of the window is cut: a little under a guitar's low E at
+ * 82.4 Hz, so the string loses under 3 dB while what lies an octave beneath it loses 24.
  */
-const CLARITY: f32 = 0.9
+const CUTOFF: real = 65.0
+
+/** How deep YIN's dip has to be to count as a period, and how sure a frame has to be — one minus the
+ * depth of that dip — for its reading to enter the median.
+ *
+ * **The YIN paper's 0.12 and a clarity of 0.9 are right for a clean tone and wrong for a real low E.**
+ * An unplugged electric guitar recorded through a laptop's microphone (`lowE.s16`, beside the tests)
+ * carries rumble below 65 Hz and a resonance at 80 Hz, with its harmonics at 160 and 240, that is
+ * louder than the string's own fundamental. The frame repeats at the string's period only roughly, so
+ * the dip there is shallow, and under the old values almost nothing in that recording reads as E2.
+ * With the filter taking the rumble out and these values letting a shallower dip count, most of the
+ * time the string sounds reads E2, and no frame reads an octave out — the tests measure both.
+ */
+const THRESHOLD: f32 = 0.2
+const CLARITY: f32 = 0.8
+
+/** How far, in cents, the pitch has to move from the note shown before another note is shown. Wider
+ * than the half-step's own 50, so a string tuned up from 55 cents flat reads as the note it is being
+ * tuned to all the way, rather than as the note below it with a plus sign.
+ */
+const SWITCH: real = 60.0
 
 /** How long the last note stays up after the signal stops: one second, counted in samples. */
 const HOLD: usize = 48000
@@ -84,6 +105,13 @@ smoother() -> Smoother = Smoother([0.0; MEDIAN_OF], 0, 0)
 /** The whole pipeline: feed it samples, read the pitch. */
 struct Pipeline
     private detector: Detector[f32]
+    private clarity: f32
+
+    // The high-pass filter every sample goes through on its way into the window, and the buffer it
+    // filters in, since what a caller hands over is the caller's.
+    private filter: HighPass[f32]
+    private filtering: bool
+    private scratch: []f32
 
     // The last `WINDOW` samples, as a ring with `at` the oldest, and the same samples laid out in
     // order for the detector.
@@ -99,21 +127,42 @@ struct Pipeline
     private smoothed: Smoother
     private detections: usize
 
+    // The note on show, as a MIDI number, and the A4 it is reckoned against.
+    private shown: Option[int]
+    private a4: real
+
     /** Hand over samples as they arrive, in chunks of any length, empty ones included. */
     feed(*self, samples: []const f32)
-        for s in samples
-            self.ring[self.at] = s
-            self.at = (self.at + 1) % WINDOW
+        var from: usize = 0
 
-            if self.filled < WINDOW then self.filled += 1
+        while from < samples.len
+            val n = min(samples.len - from, self.scratch.len)
+            var part = self.scratch[0..<n]
 
-            self.fresh += 1
-            self.since += 1
+            for j in 0..<n do part[j] = samples[from + j]
 
-            if self.since == HOLD then self.smoothed.clear()
+            if self.filtering then self.filter.process(part)
 
-            if self.filled == WINDOW && self.fresh >= HOP then self.detect()
+            for s in part do self.take(s)
+
+            from += n
     end feed
+
+    private take(*self, s: f32)
+        self.ring[self.at] = s
+        self.at = (self.at + 1) % WINDOW
+
+        if self.filled < WINDOW then self.filled += 1
+
+        self.fresh += 1
+        self.since += 1
+
+        if self.since == HOLD
+            self.smoothed.clear()
+            self.shown = None
+
+        if self.filled == WINDOW && self.fresh >= HOP then self.detect()
+    end take
 
     private detect(*self)
         self.fresh = 0
@@ -123,26 +172,58 @@ struct Pipeline
 
         self.detector.detect(self.frame) match
             Ok(Some(e)) ->
-                if e.clarity >= CLARITY
+                if e.clarity >= self.clarity
                     self.smoothed.push(e.frequency)
                     self.since = 0
             _ -> ()
+
+        self.settle()
     end detect
+
+    // Keep the note on show while the pitch stays within `SWITCH` cents of it; past that, show the
+    // nearest note instead.
+    private settle(*self)
+        self.shown = self.pitch() match
+            None -> None
+            Some(f) -> self.shown match
+                Some(m) if cents_from(f, frequency_of(m, self.a4)).abs() <= SWITCH -> Some(m)
+                _ -> note_of(f, self.a4).map(n -> n.midi)
+    end settle
 
     /** The pitch being played, in Hz — the median of the latest readings — or `None` when nothing
      * has been heard for `HOLD` samples.
      */
     pitch(self) -> Option[real] = self.smoothed.value().map(f -> real(f))
 
-    /** The nearest note to the pitch, against `a4`. */
-    note(self, a4: real = 440.0) -> Option[Note[real]] = note_of(self.pitch()?, a4)
+    /** The note on show, and how far the pitch sits from it in cents.
+     *
+     * **It is not always the nearest note.** Once a note is shown it stays until the pitch is more
+     * than `SWITCH` cents from it, so a string 55 cents flat of E reads "E −55" rather than flickering
+     * over to "D# +45" and back as the string wavers.
+     */
+    note(self) -> Option[Note[real]]
+        val m = self.shown?
+
+        Some(Note(m, cents_from(self.pitch()?, frequency_of(m, self.a4))))
+    end note
+
+    /** Reckon notes against A4 = `a4` Hz from the next window on. */
+    tune(*self, a4: real)
+        self.a4 = a4
 
     /** How many windows have been read so far — one every `HOP` samples once the first is full. */
     windows(self) -> usize = self.detections
 end Pipeline
 
-pipeline() -> Pipeline
-    val d = detector(f32(RATE), f32(LOWEST), f32(HIGHEST)).expect("the range fits the rate")
+/** A pipeline with the settings the tuner ships with; the parameters exist so a test can show what
+ * each one is for.
+ */
+pipeline(threshold: f32 = THRESHOLD, clarity: f32 = CLARITY, filtering: bool = true) -> Pipeline
+    var d = detector(f32(RATE), f32(LOWEST), f32(HIGHEST)).expect("the range fits the rate")
+    d.threshold = threshold
 
-    Pipeline(d, [0.0; WINDOW], [0.0; WINDOW], 0, 0, 0, HOLD, smoother(), 0)
+    val hp = highpass(f32(RATE), f32(CUTOFF)).expect("the cutoff fits the rate")
+
+    Pipeline(d, clarity, hp, filtering, [0.0; HOP], [0.0; WINDOW], [0.0; WINDOW], 0, 0, 0, HOLD,
+             smoother(), 0, None, 440.0)
 end pipeline
