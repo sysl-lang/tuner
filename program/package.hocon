@@ -18,8 +18,8 @@ package {
 dependencies {
   skitter    { git = "github.com/sysl-lang/skitter",    version = "0.1.0" }
   syslui     { git = "github.com/sysl-lang/syslui",     version = "0.1.7" }
-  syslui-sdl { git = "github.com/sysl-lang/syslui-sdl", version = "0.2.2" }
-  sdl3       { git = "github.com/sysl-lang/sdl3",       version = "0.3.2" }
+  syslui-sdl { git = "github.com/sysl-lang/syslui-sdl", version = "0.2.4" }
+  sdl3       { git = "github.com/sysl-lang/sdl3",       version = "0.3.5" }
   pitch      { git = "github.com/sysl-lang/pitch",      version = "0.1.2" }
 }
 

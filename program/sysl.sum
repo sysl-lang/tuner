@@ -4,6 +4,7 @@ github.com/sysl-lang/pitch v0.1.2 sha256:2246654dfe1ef40ec725d75b12950276310b70b
 github.com/sysl-lang/plutovg v0.2.1 sha256:fce0dc779820624980895c8925f094356c12711631657bb503bbd5b2239b2f9e
 github.com/sysl-lang/sdl3 v0.3.1 sha256:15f3ff23eba6f6b24947db7e3a93b6a56066eb9c2266a96450e6eb0bb8814ffe
 github.com/sysl-lang/sdl3 v0.3.2 sha256:f7faff7f30afe90615840bc239481044d82b84df610093032a8660557229f33d
+github.com/sysl-lang/sdl3 v0.3.5 sha256:cb2d2a1cc59b71cdb5ea837db239b94e4161e0393d5742c664682fabef3c0e9e
 github.com/sysl-lang/skitter v0.1.0 sha256:7a1f866d1d2c82cd99713928efdc149ea3eb7c17e4c7a83db4ff7ede4d58cd60
 github.com/sysl-lang/syslui v0.1.3 sha256:ef99ded3925eef273ef7a6364346cf5e8178b931a22aa22d30027e1d828bd5d3
 github.com/sysl-lang/syslui v0.1.4 sha256:0ed87d226a4356b0c6f4509add436ce5892cf9c7f3c94f933a5150a7d66f7fac
@@ -11,3 +12,4 @@ github.com/sysl-lang/syslui v0.1.6 sha256:eb9880843b48cdc75eca5bb83694948685e2d5
 github.com/sysl-lang/syslui v0.1.7 sha256:8b677f758d09ba5bae8a992bf6398f8442a79068cec7242cb9c40e710bcf897d
 github.com/sysl-lang/syslui-sdl v0.2.1 sha256:845eec50fc64fb978390649101c35638673197cdfc29665f2a6e532a7206df94
 github.com/sysl-lang/syslui-sdl v0.2.2 sha256:ce864540b02df5b5a581b5200acf64af88f4b1c3bb37e675a3585fd758d77dcf
+github.com/sysl-lang/syslui-sdl v0.2.4 sha256:b469fa040bd4aa8276f82f03ab5bdbf54f402f30b2942c7e284d3aaf13d92f1d
