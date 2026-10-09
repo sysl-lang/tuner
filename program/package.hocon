@@ -5,7 +5,7 @@
 // directory up.
 package {
   name    = "tuner"
-  version = "0.1.6"
+  version = "0.1.7"
 
   // The release every coordinate below was built against.
   sysl = "0.0.160"
@@ -18,8 +18,8 @@ package {
 dependencies {
   skitter    { git = "github.com/sysl-lang/skitter",    version = "0.1.0" }
   syslui     { git = "github.com/sysl-lang/syslui",     version = "0.1.7" }
-  syslui-sdl { git = "github.com/sysl-lang/syslui-sdl", version = "0.2.4" }
-  sdl3       { git = "github.com/sysl-lang/sdl3",       version = "0.3.5" }
+  syslui-sdl { git = "github.com/sysl-lang/syslui-sdl", version = "0.2.5" }
+  sdl3       { git = "github.com/sysl-lang/sdl3",       version = "0.3.6" }
   pitch      { git = "github.com/sysl-lang/pitch",      version = "0.1.2" }
 }
 
