@@ -8,7 +8,7 @@ package {
   version = "0.1.7"
 
   // The release every coordinate below was built against.
-  sysl = "0.0.160"
+  sysl = "0.1.0-alpha.8"
 }
 
 // **syslUI is named directly even though syslui-sdl brings it**: the driver asks for an older one,
@@ -16,9 +16,9 @@ package {
 // syslUI reachable. sdl3 is named for the same reason — the recording stream is newer than
 // the one Skitter asks for.
 dependencies {
-  skitter    { git = "github.com/sysl-lang/skitter",    version = "0.1.0" }
+  skitter    { git = "github.com/sysl-lang/skitter",    version = "0.3.3" }
   syslui     { git = "github.com/sysl-lang/syslui",     version = "0.1.7" }
-  syslui-sdl { git = "github.com/sysl-lang/syslui-sdl", version = "0.2.5" }
+  syslui-sdl { git = "github.com/sysl-lang/syslui-sdl", version = "0.2.6" }
   sdl3       { git = "github.com/sysl-lang/sdl3",       version = "0.3.6" }
   pitch      { git = "github.com/sysl-lang/pitch",      version = "0.1.2" }
 }
