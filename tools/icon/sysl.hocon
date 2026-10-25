@@ -6,7 +6,7 @@ package {
 }
 
 dependencies {
-  plutovg { git = "github.com/sysl-lang/plutovg", version = "0.2.1" }
+  plutovg { git = "github.com/sysl-lang/plutovg", version = "0.2.5" }
 }
 
 requires {
