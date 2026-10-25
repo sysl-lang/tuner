@@ -5,7 +5,7 @@
 // directory up.
 package {
   name    = "tuner"
-  version = "0.1.7"
+  version = "0.1.8"
 
   // The release every coordinate below was built against.
   sysl = "0.6.0"
