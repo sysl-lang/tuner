@@ -16,13 +16,18 @@ val appNameProp = providers.gradleProperty("skitter.appName").get()
 // written before this existed must still configure. `orElse("")` gives both.
 val sdlLibrariesProp = providers.gradleProperty("skitter.sdlLibraries").orElse("").get().trim()
 
-// **The version a person sees, read from `program/package.hocon`** — the line `__VERSION__` reads, so
+// **The manifest is `program/sysl.hocon`**; a project generated before sysl 0.6.0 still has
+// `program/package.hocon`, which is read when there is no `sysl.hocon`.
+val programManifest: File = rootProject.file("program/sysl.hocon").takeIf { it.exists() }
+    ?: rootProject.file("program/package.hocon")
+
+// **The version a person sees, read from the manifest** — the line `__VERSION__` reads, so
 // the screen and the system's app info cannot disagree. Only the package's own `version` starts a
 // line; a dependency's sits inside its braces, after the name.
 val programVersion = Regex("""^\s*version\s*=\s*"([^"]+)"""", RegexOption.MULTILINE)
-    .find(rootProject.file("program/package.hocon").readText())
+    .find(programManifest.readText())
     ?.groupValues?.get(1)
-    ?: error("program/package.hocon declares no version")
+    ?: error("${programManifest.name} declares no version")
 
 // **The permissions, by the name a person would say rather than the one Android spells.** Each
 // friendly name stands for every `<uses-permission>` it takes on every Android this app installs on,

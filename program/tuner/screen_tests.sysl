@@ -61,7 +61,7 @@ end tap
 // The version the manifest beside the program declares — the first `version` in it, the package's.
 private manifest_version() -> string
     val dir = parent(parent(__FILE__).expect("this file is in a directory")).expect("tuner is in the program")
-    val manifest = read_text(join(dir, "package.hocon")).expect("the program has a manifest")
+    val manifest = read_text(join(dir, "sysl.hocon")).expect("the program has a manifest")
 
     split(split(manifest, "version = \"")[1], "\"")[0]
 end manifest_version

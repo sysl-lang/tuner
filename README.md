@@ -66,7 +66,7 @@ the same 12% change in level, and it reads on the same scale as the **Input** me
 major tick marks the gate — so the gate can be set a few decibels above what the room reads with
 nothing playing. Under the meter is the last window's own reading, before the median and the clarity
 cut, marked *dropped* when the cut left it out. **Reset to defaults** puts every slider back, and the
-last line names the tuner's version — `__VERSION__`, the `version` in `program/package.hocon`, which
+last line names the tuner's version — `__VERSION__`, the `version` in `program/sysl.hocon`, which
 is also where the Android build reads its `versionName` from.
 
 The section scrolls, in the room under its header: drag it by a setting's name, or with the wheel or
@@ -145,7 +145,7 @@ new filter never puts a steady tone's reading off for more than one hop.
 
 `program/tuner/screen_tests.sysl` paints the screen into a recorder and presses it: the header opens
 and closes the section, the A4 buttons step, a drag over the settings scrolls them, Reset scrolled to
-puts them back, and the caption reads `tuner ` and the version `package.hocon` declares.
+puts them back, and the caption reads `tuner ` and the version `sysl.hocon` declares.
 
 **`program/tuner/lowE.s16` is a real low E**: the user's own guitar, an unplugged electric, played
 into a MacBook's built-in microphone — 9.5 s of 48 kHz mono, signed 16-bit little-endian, no header.

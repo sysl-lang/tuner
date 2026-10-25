@@ -2,7 +2,7 @@
 package {
   name    = "tuner-icon"
   version = "0.1.0"
-  sysl    = "0.0.160"
+  sysl    = "0.6.0"
 }
 
 dependencies {
