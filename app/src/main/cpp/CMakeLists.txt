@@ -150,4 +150,4 @@ add_dependencies(main sysl_archive)
 # either pulls in both.
 target_link_options(main PRIVATE -u SDL_main)
 
-target_link_libraries(main PRIVATE ${SYSL_ARCHIVE} SDL3::SDL3 ${SDL_EXTRA_TARGETS} m)
+target_link_libraries(main PRIVATE ${SYSL_ARCHIVE} SDL3::SDL3 ${SDL_EXTRA_TARGETS} m log)
