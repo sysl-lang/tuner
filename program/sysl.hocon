@@ -8,7 +8,7 @@ package {
   version = "0.1.9"
 
   // The release every coordinate below was built against.
-  sysl = "0.9.0"
+  sysl = "0.9.1"
 }
 
 // **syslUI is named directly even though syslui-sdl brings it**: the driver asks for an older one,
