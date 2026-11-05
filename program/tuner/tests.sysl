@@ -79,8 +79,8 @@ private watch(t: *Pipeline, samples: []const f32) -> Showing
             t.note() match
                 Some(n) if n.midi == 40 ->
                     s.e2 += 1
-                    s.least = min(s.least, n.cents)
-                    s.most = max(s.most, n.cents)
+                    s.least = s.least.min(n.cents)
+                    s.most = s.most.max(n.cents)
                 Some(_) -> s.wrong += 1
                 None -> ()
 
@@ -170,7 +170,7 @@ a_glide_from_e_to_f_switches_once_past_sixty_cents()
 
     // Up a semitone over two seconds, then held on F2.
     for chunk in 0..<300
-        v.play(&t, cents_above(E2, 100.0 * min(real(chunk) / 200.0, 1.0)))
+        v.play(&t, cents_above(E2, 100.0 * (real(chunk) / 200.0).min(1.0)))
 
         val now = midi(t)
         if now != was
@@ -195,14 +195,14 @@ switching_back_takes_sixty_cents_the_other_way()
 
     // Down to 45 cents above E2 — 55 below F, nearer E — and held there: still F2.
     for chunk in 0..<200
-        v.play(&t, cents_above(E2, 100.0 - 55.0 * min(real(chunk) / 100.0, 1.0)))
+        v.play(&t, cents_above(E2, 100.0 - 55.0 * (real(chunk) / 100.0).min(1.0)))
         assert(midi(t) == 41, f"chunk $chunk shows ${heard(t).label()} ${heard(t).cents}")
 
     // On down to 30 above E2: E2 comes back once the pitch is more than 60 cents below F.
     var back = false
 
     for chunk in 0..<200
-        v.play(&t, cents_above(E2, 45.0 - 15.0 * min(real(chunk) / 100.0, 1.0)))
+        v.play(&t, cents_above(E2, 45.0 - 15.0 * (real(chunk) / 100.0).min(1.0)))
 
         if !back && midi(t) == 40
             back = true

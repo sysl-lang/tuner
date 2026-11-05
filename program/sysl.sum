@@ -1,8 +1,9 @@
-github.com/sysl-lang/parsing v0.13.2 sha256:05d41aa60754f7324c73b32a5cc1a546e71cea8120d15080385e8883e04cbce8
-github.com/sysl-lang/pitch v0.1.3 sha256:2fc2d0ed270e521074abae0a0ce8fb2d8a2fc3b1c873e1942fd70c5cdc431429
-github.com/sysl-lang/plutovg v0.2.5 sha256:9f1ef3becebadd5a36594d14a6bb24141e039377e23cdf339d6daa92d3733b49
-github.com/sysl-lang/sdl3 v0.3.11 sha256:ddfec9152616d354a488ad9c34fddcc9058b14e1fdbf40f4a5fab1a7214bb170
-github.com/sysl-lang/skitter v0.3.4 sha256:96ef1b599e561f42f61867740a0048349b05706bee0d53a2ecc3a2de5cc9f192
-github.com/sysl-lang/syslui v0.1.8 sha256:a1222a378a4d93424e8d1ddddf1aa3dad57e8475e82dd7c963d4d66b26cccb3c
-github.com/sysl-lang/syslui-sdl v0.2.7 sha256:787411b1092f6aeadaf8893301a5ad3b7ec0569e1b96a03a46ac27df4cb1a4a4
-github.com/sysl-lang/toml v0.1.4 sha256:459fd45c4d0a721e67b2ecca417732f1a726bf38705d331e8d452fe4370a3683
+github.com/sysl-lang/parsing v0.14.1 sha256:a8da830d00560772bc997c0f58d61d22a65fdcabd66c95c685528eb241c08038
+github.com/sysl-lang/pitch v0.1.4 sha256:4b55982528d74c966d73320ce659580e0c9acb075e2d01e982787e4db629369b
+github.com/sysl-lang/plutovg v0.2.6 sha256:daef22f6d3f1cf301052abc013ffa5634f2b9b3601dd5001a82ef25be4a584e2
+github.com/sysl-lang/png v0.2.3 sha256:dfca3904935431bf4a72eb3335971b4944ee02489d443b064b507f610f0e6ebe
+github.com/sysl-lang/sdl3 v0.3.24 sha256:ebc146f3729c58e3c8a1bdac7d4849d1f667f410eeb3027b1cd9cbb625540e98
+github.com/sysl-lang/skitter v0.3.6 sha256:8432ab7c061648ad3f98448ca57ce7c6d7fc592c1ed45c85a392c0089db75afd
+github.com/sysl-lang/syslui v0.1.17 sha256:a568a11677ffa5d225cf8c6f7f6dc1551040c55bf564bd5059c7fea3250bf6ca
+github.com/sysl-lang/syslui-sdl v0.2.22 sha256:f8678d9dc01e00ed711cbd1bd3e905172d06c09d36a13afae2015652058d4a24
+github.com/sysl-lang/toml v0.1.5 sha256:5d618ec1c07ca104a8e5b4b7f90b25a1c413c3be836767c46a3065ebc9f527c1

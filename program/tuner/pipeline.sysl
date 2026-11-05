@@ -259,7 +259,7 @@ struct Pipeline
         self.detector.subharmonic_tolerance = s.tolerance
         self.detector.gate = s.gate
         self.smoothed.resize(s.median)
-        self.hold = usize(max(s.hold, 0.0) * real(RATE))
+        self.hold = usize(s.hold.max(0.0) * real(RATE))
         self.settings = s
     end adjust
 
@@ -328,7 +328,7 @@ pipeline(threshold: f32 = THRESHOLD, clarity: f32 = CLARITY, filtering: bool = t
 end pipeline
 
 /** An RMS level as decibels below full scale, with silence at -120 rather than minus infinity. */
-dbfs(level: f32) -> real = if level > 0.0 then max(20.0 * real(level).log10(), -120.0) else -120.0
+dbfs(level: f32) -> real = if level > 0.0 then (20.0 * real(level).log10()).max(-120.0) else -120.0
 
 /** The level `db` decibels below full scale names — `dbfs`'s inverse. */
 from_dbfs(db: real) -> f32 = f32((10.0).pow(db / 20.0))
